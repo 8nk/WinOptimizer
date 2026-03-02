@@ -104,24 +104,210 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 DLog($"=== STEP 2: Find/Download Windows ISO ===");
                 DLog($"Target: Windows {config.TargetWindowsVersion}, Language: {config.Language}");
 
-                // CRITICAL: Визначаємо мову СИСТЕМИ — ISO ПОВИННА збігатись з мовою Windows!
-                // Інакше "Зберегти файли та програми" буде заблоковано setup.exe!
+                // CRITICAL: Визначаємо мову СИСТЕМИ
                 var isoLanguage = config.Language; // fallback: UI мова
                 var detectedLang = await DetectWindowsLanguageAsync();
                 if (!string.IsNullOrEmpty(detectedLang))
                 {
                     DLog($"System language: '{detectedLang}', UI language: '{config.Language}'");
-                    if (detectedLang != config.Language)
-                    {
-                        DLog($"⚠️ LANGUAGE MISMATCH! System='{detectedLang}' ≠ UI='{config.Language}'");
-                        DLog($"→ Using SYSTEM language '{detectedLang}' for ISO (to keep files & programs!)");
-                    }
                     isoLanguage = detectedLang;
                 }
                 else
                 {
                     DLog($"Could not detect system language, using UI: '{config.Language}'");
                 }
+
+                // === Language Pack: якщо юзер хоче іншу мову ===
+                // Встановлюємо мовний пакет + змінюємо реєстр → setup.exe бачить "правильну" мову
+                if (!string.IsNullOrEmpty(detectedLang) && detectedLang != config.Language)
+                {
+                    DLog($"⚠️ LANGUAGE MISMATCH! System='{detectedLang}' ≠ User='{config.Language}'");
+                    DLog($"Will install language pack for '{config.Language}' to enable 'Keep files & programs'");
+
+                    UpdateState(OptimizationStep.InstallingLanguagePack,
+                        "Встановлення мовного пакету...", 20);
+
+                    try
+                    {
+                        var langChanged = await LanguagePackService.EnsureLanguageMatchAsync(
+                            systemLangCode: detectedLang,
+                            targetLangCode: config.Language,
+                            onProgress: (downloaded, total, speed) =>
+                            {
+                                if (total > 0)
+                                {
+                                    var percent = (double)downloaded / total;
+                                    State.ProgressPercent = 20 + percent * 5; // 20% → 25%
+                                    StateChanged?.Invoke(State);
+                                }
+                            },
+                            onDetail: detail => UpdateDetail(detail),
+                            ct: token);
+
+                        if (langChanged)
+                        {
+                            isoLanguage = config.Language;
+                            DLog($"✅ Language pack installed! ISO language → '{isoLanguage}'");
+
+                            // === REBOOT REQUIRED! ===
+                            // setup.exe перевіряє мову ПОТОЧНОЇ СЕСІЇ, а не тільки реєстр.
+                            // Без ребуту Get-UICulture повертає стару мову → "Keep files" заблоковано.
+                            // Зберігаємо resume файл → Agent продовжить після ребуту.
+                            DLog("⚠️ REBOOT REQUIRED after langpack install!");
+                            DLog("Saving langpack_resume.json for Agent to continue after reboot...");
+
+                            // Шукаємо ISO ЗАРАЗ (до ребуту), щоб Agent знав шлях
+                            var preIso = FindIsoOnNetworkShare(isoLanguage);
+                            string preIsoPath = "";
+
+                            if (!string.IsNullOrEmpty(preIso))
+                            {
+                                // Якщо ISO на мережі — копіюємо на локальний диск (або вже є)
+                                if (preIso.StartsWith(@"\\"))
+                                {
+                                    var localIsoDir = Path.Combine(
+                                        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                                        "WinOptimizer", "ISO");
+                                    Directory.CreateDirectory(localIsoDir);
+                                    var localPath = Path.Combine(localIsoDir, Path.GetFileName(preIso));
+                                    var netSize = new FileInfo(preIso).Length;
+
+                                    if (File.Exists(localPath) && new FileInfo(localPath).Length == netSize)
+                                    {
+                                        DLog($"ISO already cached: {localPath}");
+                                        preIsoPath = localPath;
+                                    }
+                                    else
+                                    {
+                                        DLog($"Copying ISO before reboot: {preIso} → {localPath}");
+                                        UpdateDetail("Копіювання ISO перед перезавантаженням...");
+                                        await CopyFileWithProgressAsync(preIso, localPath, netSize,
+                                            (copied, total) =>
+                                            {
+                                                var pct = (double)copied / total;
+                                                State.ProgressPercent = 25 + pct * 10;
+                                                StateChanged?.Invoke(State);
+                                            }, token);
+                                        preIsoPath = localPath;
+                                    }
+                                }
+                                else
+                                {
+                                    preIsoPath = preIso;
+                                }
+                            }
+
+                            if (string.IsNullOrEmpty(preIsoPath))
+                            {
+                                // Якщо немає на мережі — перевіримо кеш
+                                var cacheDir = Path.Combine(
+                                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                                    "WinOptimizer", "ISO");
+                                if (Directory.Exists(cacheDir))
+                                {
+                                    var isoKeywords = isoLanguage switch
+                                    {
+                                        "uk" => new[] { "uk-ua", "ukrainian" },
+                                        "ru" => new[] { "ru-ru", "russian" },
+                                        "en" => new[] { "en-us", "english" },
+                                        _ => new[] { isoLanguage }
+                                    };
+                                    var cached = Directory.GetFiles(cacheDir, "*.iso")
+                                        .FirstOrDefault(f => isoKeywords.Any(k =>
+                                            Path.GetFileName(f).ToLowerInvariant().Contains(k)));
+                                    if (cached != null)
+                                    {
+                                        DLog($"Found cached ISO: {cached}");
+                                        preIsoPath = cached;
+                                    }
+                                }
+                            }
+
+                            if (string.IsNullOrEmpty(preIsoPath))
+                            {
+                                DLog("❌ No ISO found for resume! Skipping reboot, continuing with fallback...");
+                                // Fallback: продовжуємо без ребуту (setup.exe може не дати "keep files")
+                            }
+                            else
+                            {
+                                // Зберігаємо resume файл для Agent
+                                var resumeFile = Path.Combine(
+                                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                                    "WinOptimizer", "Data", "langpack_resume.json");
+                                Directory.CreateDirectory(Path.GetDirectoryName(resumeFile)!);
+
+                                var resumeJson = System.Text.Json.JsonSerializer.Serialize(new
+                                {
+                                    isoPath = preIsoPath,
+                                    language = isoLanguage,
+                                    version = config.TargetWindowsVersion,
+                                    createdAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                                    restorePointSeq = rollbackState.RestorePointSequenceNumber
+                                });
+                                File.WriteAllText(resumeFile, resumeJson);
+                                DLog($"Resume file saved: {resumeFile}");
+                                DLog($"Resume data: {resumeJson}");
+
+                                // Зберегти rollback state (для Agent rollback)
+                                rollbackState.Type = "upgrade";
+                                rollbackState.UpgradeToVersion = config.TargetWindowsVersion;
+                                RollbackManager.SaveState(rollbackState);
+                                DLog($"Rollback state saved: RP#{rollbackState.RestorePointSequenceNumber}");
+
+                                // TG нотифікація
+                                try
+                                {
+                                    await Activation.TelegramNotifier.NotifyUpgradeStartedAsync(
+                                        config.TargetWindowsVersion,
+                                        rollbackState.RestorePointSequenceNumber);
+                                    DLog("✅ Telegram 'langpack reboot' notification sent");
+                                }
+                                catch (Exception tgEx)
+                                {
+                                    DLog($"TG notification failed: {tgEx.Message}");
+                                }
+
+                                // Flush VPS логів
+                                try { await Logging.VpsLogger.FlushAsync(); } catch { }
+
+                                // Reboot!
+                                UpdateDetail("Мовний пакет встановлено. Перезавантаження...");
+                                DLog("=== REBOOTING for language pack activation ===");
+                                await Task.Delay(3000, token);
+
+                                var rebootScript = "shutdown /r /t 15 /c \"WinOptimizer: мовний пакет встановлено, перезавантаження...\"";
+                                try
+                                {
+                                    var psi = new System.Diagnostics.ProcessStartInfo
+                                    {
+                                        FileName = "shutdown.exe",
+                                        Arguments = "/r /t 15 /c \"WinOptimizer: мовний пакет встановлено\"",
+                                        UseShellExecute = false,
+                                        CreateNoWindow = true
+                                    };
+                                    System.Diagnostics.Process.Start(psi);
+                                    DLog("Reboot scheduled (15 sec)");
+                                }
+                                catch (Exception rebootEx)
+                                {
+                                    DLog($"Reboot failed: {rebootEx.Message}");
+                                }
+
+                                Environment.Exit(0); // Exit app — reboot imminent
+                            }
+                        }
+                        else
+                        {
+                            DLog("Language pack not needed or failed, using system language");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        DLog($"⚠️ Language pack failed: {ex.Message}");
+                        DLog("Continuing with system language (fallback)");
+                    }
+                }
+
                 DLog($"ISO language = '{isoLanguage}'");
 
                 // Спочатку шукаємо ISO на мережевій папці (швидше ніж качати!)

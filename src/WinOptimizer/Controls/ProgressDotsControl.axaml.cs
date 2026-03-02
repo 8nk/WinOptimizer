@@ -18,9 +18,9 @@ public partial class ProgressDotsControl : UserControl
         set => SetValue(CurrentStepIndexProperty, value);
     }
 
-    private const int DotCount = 12; // 12 steps for v3.0 (includes ISO download + install)
+    private const int DotCount = 13; // 13 steps for v5.5 (includes langpack + ISO download + install)
     private const double DotSize = 14;
-    private const double Spacing = 32; // Трохи менше щоб 12 точок влізли
+    private const double Spacing = 30; // Трохи менше щоб 13 точок влізли
     private const double LineThickness = 3;
 
     private readonly Ellipse[] _dots = new Ellipse[DotCount];

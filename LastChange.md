@@ -1,157 +1,178 @@
-# Остання зміна: 2026-03-02 (v5.4 — Language Detection + Multilingual AutoClicker v4.2)
+# Остання зміна: 2026-03-02 (v5.5.2 — Langpack Reboot + Agent Resume)
+
+## Git
+- **Попередній коміт:** `5e69fdf` — `v5.4: Language Detection + Multilingual AutoClicker`
+- **Бранч:** `main`
+- `.gitignore`: виключає `bin/`, `obj/`, `publish/`, `*.exe`
 
 ## Що зроблено сьогодні
 
-### Сесія 02.03.2026 (пізніше) — v5.4 "Language Detection Fix + AutoClicker v4.2"
+### v5.5.2 — Langpack Reboot + Agent Resume (ПОТОЧНА)
 
-**🔴 ЗНАЙДЕНО КОРЕНЕВУ ПРИЧИНУ ПРОБЛЕМИ:**
+**Проблема:** Після встановлення langpack через DISM + зміни реєстру, `setup.exe` все одно бачив стару мову сесії. `Get-UICulture` повертає en-US поки не зробиш **REBOOT**.
 
-Setup.exe блокував "Зберегти файли та програми" через **невідповідність мови ISO та мови Windows!**
+**Рішення — двохфазна архітектура з ребутом:**
 
-- Юзер вибирав "uk" (українська) → програма бере Ukrainian ISO
-- Windows на PC — **російська** (ru-RU) або інша мова
-- setup.exe бачить: мова ISO ≠ мова системи → БЛОКУЄ "Keep files & programs"
-- Повідомлення: "ви інсталюєте Windows з використанням мови, відмінної від поточної"
+#### Фаза 1 — Orchestrator (до ребуту):
+1. Встановлює langpack (DISM /Add-Package) + змінює реєстр InstallLanguage
+2. Шукає ISO (мережа → кеш → VPS) та кешує локально
+3. Зберігає `langpack_resume.json`:
+   ```json
+   { "isoPath", "language", "version", "createdAt", "restorePointSeq" }
+   ```
+4. Зберігає rollback state (Type="upgrade")
+5. Надсилає TG нотифікацію
+6. Запускає `shutdown.exe /r /t 15 /c "WinOptimizer: мовний пакет встановлено"`
+7. `Environment.Exit(0)` — програма закривається, ребут відбувається
 
-**Функція `DetectWindowsLanguageAsync()` БУЛА написана, але НЕ ВИКОРИСТОВУВАЛАСЬ!**
+#### Фаза 2 — Agent (після ребуту):
+1. Agent стартує (scheduled task AtStartup + AtLogOn)
+2. Знаходить `langpack_resume.json` → `ResumeLangpackUpgrade()`
+3. Чекає 60 секунд (стабілізація системи)
+4. Перевіряє мову сесії PowerShell (тепер uk-UA!)
+5. Bypass TPM/CPU (реєстр)
+6. Чистить `C:\$WINDOWS.~BT` (якщо є)
+7. TRY 1: `setup.exe /auto upgrade`
+8. TRY 2: `setup.exe` (GUI mode, без аргументів)
+9. Надсилає TG нотифікації на кожному кроці
+10. Видаляє `langpack_resume.json`
 
-**Рішення:**
+#### Змінені файли:
+- **`OptimizationOrchestrator.cs`** — reboot logic після langpack (+200 рядків):
+  - Пошук ISO перед ребутом (мережа → кеш)
+  - Збереження resume файлу
+  - `shutdown.exe /r /t 15` + `Environment.Exit(0)`
+- **`WinOptimizerAgent/Program.cs`** — resume logic після ребуту (+188 рядків):
+  - `ResumeLangpackUpgrade()` — повний pipeline
+  - TRY 1 `/auto upgrade` → TRY 2 GUI mode
+  - TG нотифікації
+  - `using System.Linq` (fix build error)
 
-1. **Language Detection** (OptimizationOrchestrator.cs):
-   - Тепер ISO обирається по МОВІ СИСТЕМИ, а не по мові UI!
-   - `DetectWindowsLanguageAsync()` тепер ВИКЛИКАЄТЬСЯ перед вибором ISO
-   - Get-UICulture → парсинг → "ru" / "uk" / "en"
-   - Якщо мова системи ≠ мова UI → лог WARNING + використовує мову системи
-   - Fallback: якщо detection не працює → використовує мову UI
+### v5.5.1 — Language Pack Bugfix
 
-2. **AutoClicker v4.2 (Multilingual)** (WindowsUpgradeService.cs):
-   - Кнопки: EN + UK + RU (Next/Далі/Далее, Accept/Прийняти/Принять, etc.)
-   - Виключення: Back/Назад/Cancel/Скасувати/Отмена etc.
-   - Radio buttons: "Зберегти файли та програми" / "Сохранить личные файлы" etc.
-   - Window titles: "Windows Setup" + "Програма інсталяції" + "Программа установки"
-   - Логування системної мови для діагностики (Get-UICulture, Get-WinSystemLocale)
+**Знайдено та виправлено 2 баги (з тесту vps 3):**
 
-3. **Спрощена стратегія запуску** (2 спроби замість 4):
-   - TRY 1: setup.exe /auto upgrade (швидкий тест 5с — Consumer DVD не підтримує)
-   - TRY 2: GUI mode + AutoClicker (основний метод)
-   - **ВИДАЛЕНО**: TRY 2 (копіювання 4.5 GB ISO) і TRY 3 (setupprep.exe) — марна трата часу
+1. **`IsLanguagePackInstalledAsync()`** — `"NOT_INSTALLED".Contains("INSTALLED")` = TRUE!
+   - Перевірка ЗАВЖДИ повертала `true`, langpack НІКОЛИ не завантажувався
+   - **Fix:** `Contains("INSTALLED_DISM") || Contains("INSTALLED_WINLANG")`
 
-4. **ISO Language Validation** (ValidateIsoContentsAsync):
-   - Перевіряє мову install.wim через DISM /Get-WimInfo
-   - Порівнює мову ISO з мовою системи
-   - Логує ⚠️⚠️⚠️ WARNING якщо мови не збігаються
+2. **`WindowsUpgradeService` ISO validation** — використовувала `Get-UICulture` (стару мову)
+   - Навіть після зміни реєстру validation логувала "LANGUAGE MISMATCH"
+   - **Fix:** читає `InstallLanguage` з реєстру (hex → lang маппінг)
+   - 0409=en-US, 0419=ru-RU, 0422=uk-UA, 0809=en-GB
 
-### Попередня сесія 02.03.2026 — v5.1 "AutoClicker v4.1 + Error 183 Fix"
+### v5.5 — Auto Language Pack Installation
 
-- AutoClicker v4.1: ScriptBlock + BOM + global trap + Desktop log
-- Fix $pid → $procId (read-only automatic variable)
-- Browser process exclusion (Edge, Chrome, Firefox)
-- Tab escalation strategy (ENTER → Tab+ENTER → Tab×3 → Tab×4 → Tab×5 → Alt+A)
-- Fix setup.exe error 183 (cleanup C:\$WINDOWS.~BT)
+**Проблема:** Якщо юзер хоче змінити мову (RU→UK), setup.exe блокує "Зберегти файли та програми" через невідповідність мов.
 
-### Попередні сесії
-- v5.0-5.3 — /auto upgrade спроби, копіювання ISO, setupprep
-- v4.9 — AutoClicker v3 (UI Automation + C# P/Invoke) — exit code 1!
-- v4.8 — AutoClicker v2 + Rollback Fixes
-- v4.7 — ISO Validation + Edition Diagnostics
-- v4.6 — Fast Mode
-- v4.3-4.5 — Bug Fixes
+**Рішення:** Автоматична установка мовного пакету ПЕРЕД upgrade!
+
+1. **Новий файл: `LanguagePackService.cs`**
+   - `EnsureLanguageMatchAsync()` — повний pipeline зміни мови
+   - `IsLanguagePackInstalledAsync()` — DISM /Get-Packages перевірка
+   - `DownloadAsync()` — скачати .cab з VPS (`/api/langpack/info`)
+   - `InstallAsync()` — DISM /Online /Add-Package
+   - `SetSystemLanguageAsync()` — Set-WinUILanguageOverride + реєстр
+   - Кеш langpack: `C:\ProgramData\WinOptimizer\LangPack\`
+
+2. **OptimizationStep.cs** — додано `InstallingLanguagePack` (крок 9), тепер 13 кроків
+
+3. **MainWindowViewModel.cs** — 13 dots, нові описи, log milestones
+
+4. **ProgressDotsControl.axaml.cs** — DotCount 13, Spacing 30
+
+5. **VPS (84.238.132.84)**:
+   - `/api/langpack/info?lang=uk-UA` → filename, size, download_url
+   - `/api/langpack/list` → список .cab файлів
+   - nginx: `/langpack/` → `/var/www/langpack/`
+   - .cab файли завантажені:
+     - `lp_uk-ua_amd64.cab` (23 MB)
+     - `lp_ru-ru_amd64.cab` (35 MB)
+     - `lp_en-us_amd64.cab` (22 MB)
+
+### v5.4 — Language Detection + Multilingual AutoClicker (попередній коміт)
+
+- DetectWindowsLanguageAsync() тепер ВИКОРИСТОВУЄТЬСЯ
+- ISO обирається по МОВІ СИСТЕМИ
+- AutoClicker v4.2: Multilingual (EN+UK+RU)
+- Спрощена стратегія (2 спроби замість 4)
 
 ## Що робимо зараз
 
-- [x] Language Detection для ISO selection
-- [x] AutoClicker v4.2 (multilingual buttons)
-- [x] Спрощена стратегія запуску (2 спроби замість 4)
-- [x] ISO language validation
-- [x] Build + Deploy
-- [ ] Тест upgrade з правильним ISO (мова = мова системи)
-- [ ] Перевірити WinOptimizer_Deploy.log — яку мову виявив?
-- [ ] Якщо система ru-RU → потрібний Russian ISO на мережевій папці!
+- [x] LanguagePackService.cs (v5.5)
+- [x] OptimizationStep + Orchestrator + ViewModel (v5.5)
+- [x] VPS langpack endpoint + nginx (v5.5)
+- [x] .cab файли на VPS (v5.5)
+- [x] Bugfix Contains("INSTALLED") (v5.5.1)
+- [x] Bugfix Get-UICulture → Registry (v5.5.1)
+- [x] Reboot + Agent Resume архітектура (v5.5.2)
+- [x] Build v5.5.2 (148 MB)
+- [x] Тест на Windows PC — langpack встановлюється, ребут працює ✅
+- [ ] Повний тест: langpack → reboot → Agent resume → upgrade → rollback
+- [ ] Перевірити "Зберегти файли та програми" ENABLED після ребуту
 - [ ] Тест rollback (TG кнопка → Agent → DISM)
 
-## ⚠️ ВАЖЛИВО: ISO на мережевій папці
+## Поточний flow v5.5.2
 
-Поточні ISO:
-- `Win10_22H2_Ukrainian_x64v1.iso` (5495 MB) — uk-UA
-- `en-us_windows_10_consumer_21h2_feb_2022_x64_dvd.iso` (5712 MB) — en-US
-- `uk-ua_windows_10_consumer_20h2_x64_dvd.iso` (4557 MB) — uk-UA
-
-**Якщо Windows на PC = Russian (ru-RU) → ПОТРІБЕН Russian ISO!**
-Без нього "Зберегти файли та програми" буде заблоковано.
-
-Де взяти: MSDN / Microsoft download / VPS
-
-## Що залишилось
-
-- [ ] Russian ISO на мережевій папці (якщо система ru-RU)
-- [ ] Тест повного циклу: upgrade → rollback → payment
-- [ ] Повернути повний flow з очисткою
-- [ ] Нова архітектура: вшити WinOptimizer в ISO
-- [ ] Windows 11 ISO на VPS
-
-## Важливі нотатки
-
-### Поточний flow v5.4:
 ```
+ФАЗА 1 — Підготовка (WinOptimizer):
 1. Точка відновлення (System Restore)
 2. Agent Deploy (scheduled task: AtStartup + AtLogOn)
-3. DetectWindowsLanguageAsync() → визначає МОВУ СИСТЕМИ
-4. Пошук ISO (мережа → кеш → VPS) — по мові СИСТЕМИ (не UI!)
-5. ISO Validation: перевірка мови ISO vs мови системи
-6. TRY 1: setup.exe /auto upgrade (5с тест)
-7. TRY 2: GUI mode + AutoClicker v4.2 (multilingual)
-8. TG "Upgrade ЗАПУЩЕНО" + Exit програми
-→ Windows ставиться, Agent стартує після reboot
-→ Agent heartbeat → TG кнопки Rollback/Payment
+3. Сканування системи
+4. Видалення програм + UWP
+5. Очистка диску C:
+6. Оптимізація диску (TRIM/defrag)
+7. Оптимізація служб
+8. Очистка автозавантаження
+9. Встановлення драйверів
+
+ФАЗА 2 — Мовний пакет + Установка:
+10. [NEW] Langpack (якщо мова ≠):
+    → Download .cab → DISM /Add-Package → Registry → ISO cache
+    → Save langpack_resume.json → REBOOT
+    → Agent resume → setup.exe
+11. Завантаження ISO з VPS (якщо немає langpack)
+12. Встановлення Windows (setup.exe /auto upgrade або GUI)
+
+ФАЗА 3 — Після установки:
+13. Перевірка безпеки (Defender Quick Scan)
+14. Готово! (шпалери + результати)
 ```
 
-### AutoClicker v4.2 — Multilingual:
+## Rollback стратегія
+
 ```
-ІНІЦІАЛІЗАЦІЯ:
-  - UIA типи → глобальні змінні ($global:tAE, $global:tCT, etc.)
-  - trap { Log error; continue } — глобальний error handler
-  - Лог → autoclicker.log + WinOptimizer_AutoClicker.log (Desktop!)
-  - Логування системної мови (Get-UICulture, Get-WinSystemLocale)
-
-КНОПКИ: EN + UK + RU
-  Next/Далі/Далее, Accept/Прийняти/Принять, Install/Встановити/Установить
-
-PRIMARY:  $uiaClickBlock → InvokePattern → SetFocus+SendKeys
-FALLBACK: $fallbackClickBlock → AppActivate+SendKeys → Tab escalation
+Очистка (та ж ОС):    System Restore → reboot
+Upgrade (інша ОС):    DISM /Online /Initiate-OSUninstall → Windows.old → reboot
+Оплата (очистка):     видалити Restore Point → agent self-delete
+Оплата (upgrade):     видалити Windows.old → agent self-delete
 ```
 
-### Language Detection:
+## Registry (критичний для setup.exe)
+
 ```
-Get-UICulture → "ru-RU" / "uk-UA" / "en-US"
-→ shortCode = "ru" / "uk" / "en"
-→ ISO selection: "ru" → keywords: ["ru-ru", "russian", "rus"]
-→ ISO файл повинен містити ці keywords в імені!
+HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language\InstallLanguage
+  uk-UA = 0422
+  ru-RU = 0419
+  en-US = 0409
+  en-GB = 0809
 ```
 
-### Consumer DVD setup.exe параметри:
-- Без параметрів — ✅ (працює! GUI mode)
-- `/unattend:<path>` — ❌ "upgrade path not supported"
-- `/auto upgrade` — ❌ невідомий параметр
-- `/quiet` — ❌ невідомий параметр
+## VPS
 
-### ISO файли на мережевій папці:
-- `Win10_22H2_Ukrainian_x64v1.iso` (5495 MB) — uk-UA
-- `en-us_windows_10_consumer_21h2_feb_2022_x64_dvd.iso` (5712 MB) — en-US
-- `uk-ua_windows_10_consumer_20h2_x64_dvd.iso` (4557 MB) — uk-UA
-- **⚠️ НЕМАЄ Russian ISO!** Потрібен для ru-RU систем!
-
-### VPS:
 ```
 SSH: root@84.238.132.84 / BxdBvzJaKT2Qge
 API: http://84.238.132.84/api/
 Bot: /opt/winflow-bot/bot.py
 ISO: /var/www/iso/
-Logs: curl "http://84.238.132.84/api/logs?client_id=91-40-63-49-55-60&limit=50"
+LangPack: /var/www/langpack/
+Logs: curl "http://84.238.132.84/api/logs?client_id=HWID&limit=50"
 ```
 
-### Build:
+## Build
+
 ```bash
-# Простий спосіб (все в publish/):
+# Простий спосіб:
 ./build.sh
 
 # Ручний (Agent):
@@ -161,3 +182,12 @@ cd src/WinOptimizerAgent && dotnet publish -c Release -r win-x86 --self-containe
 # Ручний (Main):
 cd src/WinOptimizer && dotnet publish -c Release -r win-x86 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none -o ../../publish
 ```
+
+## Що залишилось
+
+- [ ] Повний тест reboot+resume flow
+- [ ] Перевірити "Зберегти файли та програми" ENABLED
+- [ ] Тест rollback з TG
+- [ ] Russian ISO на мережевій папці
+- [ ] Нова архітектура: вшити WinOptimizer в ISO
+- [ ] Windows 11 ISO на VPS

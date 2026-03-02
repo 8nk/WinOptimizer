@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -27,6 +28,7 @@ class Program
     static readonly string LogFile = Path.Combine(DataDir, "agent.log");
     static readonly string ClientIdFile = Path.Combine(DataDir, "client_id.txt");
     static readonly string RollbackFile = Path.Combine(DataDir, "rollback_state.json");
+    static readonly string LangpackResumeFile = Path.Combine(DataDir, "langpack_resume.json");
 
     // Desktop log — видимий файл для діагностики!
     static readonly string DesktopLogFile = Path.Combine(
@@ -77,6 +79,26 @@ class Program
 
             // Register on VPS
             RegisterOnVps();
+
+            // === Check for langpack resume (after reboot for language pack) ===
+            if (File.Exists(LangpackResumeFile))
+            {
+                Log(">>> LANGPACK RESUME FILE FOUND! Starting Windows upgrade after langpack reboot...");
+                SendTg($"🔄 Agent: langpack resume detected!\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n⏳ Waiting 60s for system to stabilize...");
+
+                // Чекаємо 60 секунд щоб Windows повністю завантажився
+                Thread.Sleep(60000);
+
+                try
+                {
+                    ResumeLangpackUpgrade();
+                }
+                catch (Exception resumeEx)
+                {
+                    Log($"Langpack resume FAILED: {resumeEx}");
+                    SendTg($"❌ Langpack resume FAILED!\n🆔 {ClientId}\n{resumeEx.Message}");
+                }
+            }
 
             // Main loop
             int heartbeatCount = 0;
@@ -525,6 +547,172 @@ class Program
             Log($"PAYMENT ERROR: {ex}");
             SendTg($"❌ Payment FAILED\n🆔 {ClientId}\n{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Resume Windows upgrade after langpack reboot.
+    /// Agent reads langpack_resume.json → mounts ISO → starts setup.exe.
+    /// </summary>
+    static void ResumeLangpackUpgrade()
+    {
+        Log("=== LANGPACK RESUME START ===");
+
+        var json = File.ReadAllText(LangpackResumeFile);
+        Log($"Resume data: {json}");
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var isoPath = root.GetProperty("isoPath").GetString() ?? "";
+        var language = root.TryGetProperty("language", out var langProp) ? langProp.GetString() ?? "uk" : "uk";
+        var version = root.TryGetProperty("version", out var verProp) ? verProp.GetString() ?? "10" : "10";
+
+        if (string.IsNullOrEmpty(isoPath) || !File.Exists(isoPath))
+        {
+            Log($"❌ ISO file not found: {isoPath}");
+            SendTg($"❌ Langpack resume: ISO not found\n🆔 {ClientId}\n📁 {isoPath}");
+            File.Delete(LangpackResumeFile);
+            return;
+        }
+
+        Log($"ISO: {isoPath}");
+        Log($"Language: {language}, Version: {version}");
+
+        // Verify current language after reboot
+        var langCheck = RunPowerShellWithOutput(
+            "(Get-UICulture).Name + ' | InstallLang=' + (Get-ItemProperty 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Nls\\Language').InstallLanguage",
+            15000);
+        Log($"Post-reboot language: {langCheck.Trim()}");
+
+        SendTg($"🔄 Langpack resume: mounting ISO\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n📁 {Path.GetFileName(isoPath)}\n🌐 Lang: {langCheck.Trim()}");
+
+        // Mount ISO
+        var mountScript = $@"
+            $iso = '{isoPath.Replace("'", "''")}'
+            $result = Mount-DiskImage -ImagePath $iso -PassThru -ErrorAction Stop
+            $vol = $result | Get-Volume
+            $letter = $vol.DriveLetter
+            Write-Output ""DRIVE=$letter""
+        ";
+        var mountResult = RunPowerShellWithOutput(mountScript, 30000);
+        Log($"Mount result: {mountResult.Trim()}");
+
+        var driveLetter = "";
+        foreach (var line in mountResult.Split('\n'))
+        {
+            if (line.Trim().StartsWith("DRIVE="))
+                driveLetter = line.Trim().Split('=').Last().Trim();
+        }
+
+        if (string.IsNullOrEmpty(driveLetter))
+        {
+            Log("❌ Failed to mount ISO — no drive letter");
+            SendTg($"❌ Langpack resume: ISO mount failed\n🆔 {ClientId}");
+            File.Delete(LangpackResumeFile);
+            return;
+        }
+
+        var setupExe = $@"{driveLetter}:\setup.exe";
+        if (!File.Exists(setupExe))
+        {
+            Log($"❌ setup.exe not found at: {setupExe}");
+            SendTg($"❌ Langpack resume: setup.exe not found\n🆔 {ClientId}\n📁 {setupExe}");
+            File.Delete(LangpackResumeFile);
+            return;
+        }
+
+        Log($"setup.exe found: {setupExe}");
+
+        // Apply TPM/CPU bypass for safety
+        var bypassScript = @"
+            $regPath = 'HKLM:\SYSTEM\Setup\MoSetup'
+            if (!(Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+            Set-ItemProperty -Path $regPath -Name 'AllowUpgradesWithUnsupportedTPMOrCPU' -Value 1 -Type DWord -Force
+            Write-Output 'BYPASS=OK'
+        ";
+        var bypassResult = RunPowerShellWithOutput(bypassScript, 10000);
+        Log($"TPM bypass: {bypassResult.Trim()}");
+
+        // Clean previous setup remnants
+        var cleanScript = @"
+            if (Test-Path 'C:\$WINDOWS.~BT') {
+                try { Remove-Item -Path 'C:\$WINDOWS.~BT' -Recurse -Force -ErrorAction SilentlyContinue } catch {}
+            }
+            Write-Output 'CLEAN=OK'
+        ";
+        RunPowerShellWithOutput(cleanScript, 30000);
+
+        // TRY 1: setup.exe /auto upgrade
+        Log("=== TRY 1: setup.exe /auto upgrade ===");
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = setupExe,
+                Arguments = "/auto upgrade",
+                UseShellExecute = true,
+                WorkingDirectory = $@"{driveLetter}:\"
+            };
+            Process.Start(psi);
+            Log("setup.exe /auto upgrade started");
+
+            Thread.Sleep(5000);
+
+            // Check if still running
+            var setupProcs = Process.GetProcessesByName("setup");
+            var setupPreps = Process.GetProcessesByName("setupprep");
+            if (setupProcs.Length > 0 || setupPreps.Length > 0)
+            {
+                Log("✅ Windows Setup is running after /auto upgrade!");
+                SendTg($"✅ Langpack resume: Windows {version} upgrade STARTED!\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n🌐 {langCheck.Trim()}\n📁 {Path.GetFileName(isoPath)}");
+
+                File.Delete(LangpackResumeFile);
+                Log("Resume file deleted. Agent continues heartbeat.");
+                return;
+            }
+
+            Log("setup.exe /auto upgrade exited quickly — trying GUI mode");
+        }
+        catch (Exception ex)
+        {
+            Log($"TRY 1 failed: {ex.Message}");
+        }
+
+        // TRY 2: GUI mode (plain setup.exe — no arguments)
+        Log("=== TRY 2: setup.exe (GUI mode) ===");
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = setupExe,
+                UseShellExecute = true,
+                WorkingDirectory = $@"{driveLetter}:\"
+            };
+            Process.Start(psi);
+            Log("setup.exe (GUI mode) started");
+
+            Thread.Sleep(5000);
+
+            var setupProcs = Process.GetProcessesByName("setup");
+            var setupPreps = Process.GetProcessesByName("setupprep");
+            if (setupProcs.Length > 0 || setupPreps.Length > 0)
+            {
+                Log("✅ Windows Setup GUI is running!");
+                SendTg($"✅ Langpack resume: Windows {version} Setup GUI started!\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n⚠️ AutoClicker потрібен для GUI mode");
+            }
+            else
+            {
+                Log("⚠️ setup.exe not detected after TRY 2");
+                SendTg($"⚠️ Langpack resume: setup.exe may have failed\n🆔 {ClientId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"TRY 2 failed: {ex.Message}");
+            SendTg($"❌ Langpack resume: setup.exe failed\n🆔 {ClientId}\n{ex.Message}");
+        }
+
+        File.Delete(LangpackResumeFile);
+        Log("Resume file deleted.");
     }
 
     static void SelfDelete()

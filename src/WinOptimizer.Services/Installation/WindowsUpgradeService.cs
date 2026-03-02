@@ -1201,13 +1201,18 @@ exit 0
         }
 
         // 6. Перевіряємо мову ISO vs мову системи
+        // ВАЖЛИВО: setup.exe перевіряє InstallLanguage з реєстру, а НЕ Get-UICulture!
+        // Get-UICulture повертає стару мову до ребуту, тому читаємо реєстр напряму.
         try
         {
             var langCheckScript = @"
                 $uiCulture = (Get-UICulture).Name
                 $systemLocale = (Get-WinSystemLocale).Name
+                $nlsPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language'
+                $installLang = (Get-ItemProperty $nlsPath).InstallLanguage
                 Write-Output ""SystemUI=$uiCulture""
                 Write-Output ""SystemLocale=$systemLocale""
+                Write-Output ""InstallLanguage=$installLang""
             ";
             var langResult = await RunPowerShellAsync(langCheckScript);
             DLog($"System language info: {langResult.Trim().Replace("\n", ", ")}");
@@ -1221,17 +1226,40 @@ exit 0
             var wimLangResult = await RunPowerShellAsync(wimLangScript);
             DLog($"ISO language: {wimLangResult.Trim()}");
 
-            // Попередження якщо мови не збігаються
+            // Порівнюємо InstallLanguage з реєстру з мовою ISO
+            // InstallLanguage hex codes: 0409=en-US, 0419=ru-RU, 0422=uk-UA
             var isoLang = wimLangResult.ToLowerInvariant();
-            var sysLang = langResult.ToLowerInvariant();
-            if (sysLang.Contains("ru-ru") && !isoLang.Contains("ru-ru"))
-                DLog("⚠️⚠️⚠️ LANGUAGE MISMATCH! System=ru-RU but ISO is NOT Russian! 'Keep files & apps' will be BLOCKED!");
-            else if (sysLang.Contains("uk-ua") && !isoLang.Contains("uk-ua"))
-                DLog("⚠️⚠️⚠️ LANGUAGE MISMATCH! System=uk-UA but ISO is NOT Ukrainian! 'Keep files & apps' will be BLOCKED!");
-            else if (sysLang.Contains("en-us") && !isoLang.Contains("en-us") && !isoLang.Contains("en-gb"))
-                DLog("⚠️⚠️⚠️ LANGUAGE MISMATCH! System=en-US but ISO is NOT English! 'Keep files & apps' will be BLOCKED!");
+            var installLangHex = "";
+            foreach (var line in langResult.Split('\n'))
+            {
+                if (line.Trim().StartsWith("InstallLanguage="))
+                    installLangHex = line.Trim().Split('=').Last().Trim().ToLowerInvariant();
+            }
+
+            // Маппінг hex → мова для порівняння з ISO
+            var installLangName = installLangHex switch
+            {
+                "0409" => "en-us",
+                "0419" => "ru-ru",
+                "0422" => "uk-ua",
+                "0809" => "en-gb",
+                _ => installLangHex
+            };
+
+            DLog($"InstallLanguage registry: {installLangHex} → {installLangName}");
+
+            if (!string.IsNullOrEmpty(installLangName) && isoLang.Contains(installLangName))
+            {
+                DLog("✅ ISO language matches InstallLanguage registry — 'Keep files & apps' should work!");
+            }
+            else if (!string.IsNullOrEmpty(installLangName) && installLangName.StartsWith("en") && (isoLang.Contains("en-us") || isoLang.Contains("en-gb")))
+            {
+                DLog("✅ ISO language matches InstallLanguage registry (English) — 'Keep files & apps' should work!");
+            }
             else
-                DLog("✅ ISO language appears to match system language");
+            {
+                DLog($"⚠️⚠️⚠️ LANGUAGE MISMATCH! InstallLanguage={installLangHex} ({installLangName}) vs ISO language. 'Keep files & apps' may be BLOCKED!");
+            }
         }
         catch (Exception ex)
         {

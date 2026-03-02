@@ -553,7 +553,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         CurrentOptimizationStep = state.CurrentStep;
 
-        // Step index for 12 dots (новий порядок — антивірус в кінці)
+        // Step index for 13 dots (новий порядок — мовний пакет + антивірус в кінці)
         CurrentStepIndex = state.CurrentStep switch
         {
             OptimizationStep.CreatingRestorePoint => 0,
@@ -564,10 +564,11 @@ public partial class MainWindowViewModel : ViewModelBase
             OptimizationStep.ServiceOptimize => 5,
             OptimizationStep.StartupOptimize => 6,
             OptimizationStep.DriverUpdate => 7,
-            OptimizationStep.DownloadingWindows => 8,
-            OptimizationStep.InstallingWindows => 9,
-            OptimizationStep.AntivirusScan => 10,
-            OptimizationStep.Completed => 11,
+            OptimizationStep.InstallingLanguagePack => 8,
+            OptimizationStep.DownloadingWindows => 9,
+            OptimizationStep.InstallingWindows => 10,
+            OptimizationStep.AntivirusScan => 11,
+            OptimizationStep.Completed => 12,
             _ => CurrentStepIndex,
         };
 
@@ -614,7 +615,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void UpdateStepDescription(OptimizationStep step)
     {
-        // Новий порядок: антивірус після установки Windows
+        // Новий порядок: мовний пакет + антивірус після установки Windows
         var (number, name) = step switch
         {
             OptimizationStep.CreatingRestorePoint => (1, L("Резервне копіювання", "Резервное копирование", "Backup")),
@@ -625,15 +626,16 @@ public partial class MainWindowViewModel : ViewModelBase
             OptimizationStep.ServiceOptimize => (6, L("Налаштування служб Windows", "Настройка служб Windows", "Configuring Windows services")),
             OptimizationStep.StartupOptimize => (7, L("Налаштування автозапуску", "Настройка автозапуска", "Configuring startup")),
             OptimizationStep.DriverUpdate => (8, L("Встановлення драйверів", "Установка драйверов", "Installing drivers")),
-            OptimizationStep.DownloadingWindows => (9, L("Завантаження Windows", "Загрузка Windows", "Downloading Windows")),
-            OptimizationStep.InstallingWindows => (10, L("Встановлення Windows", "Установка Windows", "Installing Windows")),
-            OptimizationStep.AntivirusScan => (11, L("Перевірка безпеки", "Проверка безопасности", "Security check")),
-            OptimizationStep.Completed => (12, L("Завершення", "Завершение", "Finishing")),
+            OptimizationStep.InstallingLanguagePack => (9, L("Встановлення мовного пакету", "Установка языкового пакета", "Installing language pack")),
+            OptimizationStep.DownloadingWindows => (10, L("Завантаження Windows", "Загрузка Windows", "Downloading Windows")),
+            OptimizationStep.InstallingWindows => (11, L("Встановлення Windows", "Установка Windows", "Installing Windows")),
+            OptimizationStep.AntivirusScan => (12, L("Перевірка безпеки", "Проверка безопасности", "Security check")),
+            OptimizationStep.Completed => (13, L("Завершення", "Завершение", "Finishing")),
             _ => (0, ""),
         };
 
         StepDescription = number > 0
-            ? $"{L("Етап", "Этап", "Phase")} {number} {L("з", "из", "of")} 12 — {name}"
+            ? $"{L("Етап", "Этап", "Phase")} {number} {L("з", "из", "of")} 13 — {name}"
             : "";
     }
 
@@ -706,28 +708,36 @@ public partial class MainWindowViewModel : ViewModelBase
             AddLogIfNew("driver_start", "\u2192", L("Встановлення драйверів...", "Установка драйверов...", "Installing drivers..."));
         }
 
-        // Phase 9: Download Windows ISO (було 10)
+        // Phase 9: Language Pack (якщо мова юзера ≠ мова системи)
+        if (step >= OptimizationStep.InstallingLanguagePack)
+        {
+            AddLogIfNew("driver_done", "\u2713", L("Драйвери встановлено", "Драйверы установлены", "Drivers installed"));
+            AddLogIfNew("langpack_start", "\u2192", L("Встановлення мовного пакету...", "Установка языкового пакета...", "Installing language pack..."));
+        }
+
+        // Phase 10: Download Windows ISO
         if (step >= OptimizationStep.DownloadingWindows)
         {
             AddLogIfNew("driver_done", "\u2713", L("Драйвери встановлено", "Драйверы установлены", "Drivers installed"));
+            AddLogIfNew("langpack_done", "\u2713", L("Мовний пакет встановлено", "Языковой пакет установлен", "Language pack installed"));
             AddLogIfNew("iso_start", "\u2192", L($"Завантаження Windows {_selectedWindowsVersion}...", $"Загрузка Windows {_selectedWindowsVersion}...", $"Downloading Windows {_selectedWindowsVersion}..."));
         }
 
-        // Phase 10: Installing Windows (було 11)
+        // Phase 11: Installing Windows
         if (step >= OptimizationStep.InstallingWindows)
         {
             AddLogIfNew("iso_done", "\u2713", L("Windows завантажено", "Windows загружена", "Windows downloaded"));
             AddLogIfNew("install_start", "\u2192", L($"Встановлення Windows {_selectedWindowsVersion}...", $"Установка Windows {_selectedWindowsVersion}...", $"Installing Windows {_selectedWindowsVersion}..."));
         }
 
-        // Phase 11: Antivirus (тепер після установки!)
+        // Phase 12: Antivirus (після установки!)
         if (step >= OptimizationStep.AntivirusScan)
         {
             AddLogIfNew("install_done", "\u2713", L("Windows встановлено", "Windows установлена", "Windows installed"));
             AddLogIfNew("av_start", "\u2192", L("Перевірка на віруси...", "Проверка на вирусы...", "Scanning for viruses..."));
         }
 
-        // Phase 12: Completed
+        // Phase 13: Completed
         if (step >= OptimizationStep.Completed)
         {
             AddLogIfNew("av_done", "\u2713", L("Перевірку безпеки завершено", "Проверка безопасности завершена", "Security check complete"));
