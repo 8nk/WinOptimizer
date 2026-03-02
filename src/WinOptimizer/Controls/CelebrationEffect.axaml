@@ -1,0 +1,8 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:WinOptimizer.Controls"
+             x:Class="WinOptimizer.Controls.CelebrationEffect"
+             x:DataType="controls:CelebrationEffect"
+             IsHitTestVisible="False">
+    <Canvas Name="ParticleCanvas" ClipToBounds="True" />
+</UserControl>

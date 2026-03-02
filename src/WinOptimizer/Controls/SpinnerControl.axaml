@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:WinOptimizer.Controls"
+             x:Class="WinOptimizer.Controls.SpinnerControl"
+             x:DataType="controls:SpinnerControl">
+
+    <Canvas Name="SpinnerCanvas"
+            Width="{Binding Size, RelativeSource={RelativeSource AncestorType=controls:SpinnerControl}}"
+            Height="{Binding Size, RelativeSource={RelativeSource AncestorType=controls:SpinnerControl}}">
+        <!-- Primary arc (cyan) -->
+        <Path Name="ArcPrimary"
+              Stroke="#00838F"
+              StrokeThickness="5"
+              StrokeLineCap="Round"
+              RenderTransformOrigin="0.5,0.5">
+            <Path.RenderTransform>
+                <RotateTransform Angle="0" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- Secondary arc (lighter cyan) -->
+        <Path Name="ArcSecondary"
+              Stroke="#4DD0E1"
+              StrokeThickness="3"
+              StrokeLineCap="Round"
+              Opacity="0.5"
+              RenderTransformOrigin="0.5,0.5">
+            <Path.RenderTransform>
+                <RotateTransform Angle="0" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- Tertiary arc (lightest) -->
+        <Path Name="ArcTertiary"
+              Stroke="#B2EBF2"
+              StrokeThickness="2"
+              StrokeLineCap="Round"
+              Opacity="0.3"
+              RenderTransformOrigin="0.5,0.5">
+            <Path.RenderTransform>
+                <RotateTransform Angle="0" />
+            </Path.RenderTransform>
+        </Path>
+    </Canvas>
+
+</UserControl>

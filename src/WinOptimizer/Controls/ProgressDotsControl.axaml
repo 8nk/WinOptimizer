@@ -1,0 +1,10 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:WinOptimizer.Controls"
+             x:Class="WinOptimizer.Controls.ProgressDotsControl"
+             x:DataType="controls:ProgressDotsControl">
+
+    <!-- Canvas for manual layout: dots + animated connecting lines -->
+    <Canvas Name="DotsCanvas" Width="420" Height="26" HorizontalAlignment="Center" />
+
+</UserControl>

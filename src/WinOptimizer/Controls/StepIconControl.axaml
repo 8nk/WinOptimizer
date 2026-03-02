@@ -1,0 +1,166 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="using:WinOptimizer.Controls"
+             x:Class="WinOptimizer.Controls.StepIconControl"
+             x:DataType="controls:StepIconControl"
+             Width="120" Height="120">
+
+    <Grid>
+        <!-- CreatingRestorePoint: Shield with checkmark -->
+        <Path Name="IconRestorePoint" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9L10,17Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- SystemScan: Magnifying glass -->
+        <Path Name="IconSystemScan" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M15.5,14H14.71L14.43,13.73C15.41,12.59 16,11.11 16,9.5C16,5.91 13.09,3 9.5,3C5.91,3 3,5.91 3,9.5C3,13.09 5.91,16 9.5,16C11.11,16 12.59,15.41 13.73,14.43L14,14.71V15.5L19,20.49L20.49,19L15.5,14M9.5,14C7.01,14 5,11.99 5,9.5C5,7.01 7.01,5 9.5,5C11.99,5 14,7.01 14,9.5C14,11.99 11.99,14 9.5,14Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- AntivirusScan: Bug with slash -->
+        <Path Name="IconAntivirusScan" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M20,8H17.19C16.74,7.22 16.12,6.55 15.37,6.04L17,4.41L15.59,3L13.42,5.17C12.96,5.06 12.49,5 12,5C11.51,5 11.04,5.06 10.59,5.17L8.41,3L7,4.41L8.62,6.04C7.88,6.55 7.26,7.22 6.81,8H4V10H6.09C6.04,10.33 6,10.66 6,11V12H4V14H6V15C6,15.34 6.04,15.67 6.09,16H4V18H6.81C7.85,19.79 9.78,21 12,21C14.22,21 16.15,19.79 17.19,18H20V16H17.91C17.96,15.67 18,15.34 18,15V14H20V12H18V11C18,10.66 17.96,10.33 17.91,10H20V8M14,16H10V14H14V16M14,12H10V10H14V12Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- ProgramRemoval: Delete/Uninstall -->
+        <Path Name="IconProgramRemoval" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M6,19C6,20.1 6.9,21 8,21H16C17.1,21 18,20.1 18,19V7H6V19M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- DiskCleanup: Broom -->
+        <Path Name="IconDiskCleanup" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M19.36,2.72L20.78,4.14L15.06,9.85C16.13,11.39 16.28,13.24 15.38,14.44L9.06,8.12C10.26,7.22 12.11,7.37 13.65,8.44L19.36,2.72M5.93,17.57C3.92,15.56 2.69,13.16 2.35,10.92L7.23,8.83L14.67,16.27L12.58,21.15C10.34,20.81 7.94,19.58 5.93,17.57Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- DiskOptimize: HDD -->
+        <Path Name="IconDiskOptimize" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M6,2H18A2,2 0 0,1 20,4V20A2,2 0 0,1 18,22H6A2,2 0 0,1 4,20V4A2,2 0 0,1 6,2M12,4A6,6 0 0,0 6,10C6,13.31 8.69,16 12,16A6,6 0 0,0 18,10A6,6 0 0,0 12,4M12,6A4,4 0 0,1 16,10A4,4 0 0,1 12,14A4,4 0 0,1 8,10A4,4 0 0,1 12,6M12,8A2,2 0 0,0 10,10A2,2 0 0,0 12,12A2,2 0 0,0 14,10A2,2 0 0,0 12,8M12,18A1,1 0 0,0 11,19A1,1 0 0,0 12,20A1,1 0 0,0 13,19A1,1 0 0,0 12,18Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- ServiceOptimize: Gear -->
+        <Path Name="IconServiceOptimize" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.34 19.43,11L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.5,5.32 14.87,5.07L14.5,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.5,2.42L9.13,5.07C8.5,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11C4.53,11.34 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.21,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.04 4.95,18.95L7.44,17.95C7.96,18.34 8.5,18.68 9.13,18.93L9.5,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.5,21.58L14.87,18.93C15.5,18.68 16.04,18.34 16.56,17.95L19.05,18.95C19.27,19.04 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- StartupOptimize: Rocket -->
+        <Path Name="IconStartupOptimize" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M16.2,16.2L6,10L16.2,6L10,16.2L12,12L16.2,16.2Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- DriverUpdate: Wrench -->
+        <Path Name="IconDriverUpdate" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M22.7,19L13.6,9.9C14.5,7.6 14,4.9 12.1,3C10.1,1 7.1,0.6 4.7,1.7L9,6L6,9L1.6,4.7C0.4,7.1 0.9,10.1 2.9,12.1C4.8,14 7.5,14.5 9.8,13.6L18.9,22.7C19.3,23.1 19.9,23.1 20.3,22.7L22.6,20.4C23.1,20 23.1,19.3 22.7,19Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- DownloadingWindows: Cloud download arrow -->
+        <Path Name="IconDownloadWindows" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M19.35,10.04C18.67,6.59 15.64,4 12,4C9.11,4 6.6,5.64 5.35,8.04C2.34,8.36 0,10.91 0,14A6,6 0 0,0 6,20H19A5,5 0 0,0 24,15C24,12.36 21.95,10.22 19.35,10.04M17,13L12,18L7,13H10V9H14V13H17Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- InstallingWindows: Windows logo -->
+        <Path Name="IconInstallWindows" Opacity="0"
+              Fill="White"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M3,12V6.75L9,5.43V11.91L3,12M20,3V11.75L10,11.9V5.21L20,3M3,13L9,13.09V19.9L3,18.75V13M10,13.25L20,13.25V22L10,20.09V13.25Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- Completed: Checkmark -->
+        <Path Name="IconCompleted" Opacity="0"
+              Fill="#1B5E20"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M12,2C6.48,2 2,6.48 2,12C2,17.52 6.48,22 12,22C17.52,22 22,17.52 22,12C22,6.48 17.52,2 12,2M10,17L5,12L6.41,10.59L10,14.17L17.59,6.58L19,8L10,17Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+
+        <!-- Error: X mark -->
+        <Path Name="IconError" Opacity="0"
+              Fill="#B71C1C"
+              Stretch="Uniform" Width="80" Height="80"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              RenderTransformOrigin="0.5,0.5"
+              Data="M12,2C6.47,2 2,6.47 2,12C2,17.53 6.47,22 12,22C17.53,22 22,17.53 22,12C22,6.47 17.53,2 12,2M15.59,17L12,13.41L8.41,17L7,15.59L10.59,12L7,8.41L8.41,7L12,10.59L15.59,7L17,8.41L13.41,12L17,15.59L15.59,17Z">
+            <Path.RenderTransform>
+                <ScaleTransform ScaleX="1" ScaleY="1" />
+            </Path.RenderTransform>
+        </Path>
+    </Grid>
+
+</UserControl>

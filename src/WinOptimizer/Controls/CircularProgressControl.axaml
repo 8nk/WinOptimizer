@@ -1,0 +1,18 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="WinOptimizer.Controls.CircularProgressControl">
+    <Grid x:Name="RootGrid">
+        <!-- Canvas for custom drawing the arc -->
+        <Canvas x:Name="ArcCanvas" />
+        <!-- Percentage text centered -->
+        <TextBlock x:Name="PercentText"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   FontWeight="Bold"
+                   Foreground="White">
+            <TextBlock.Effect>
+                <DropShadowEffect BlurRadius="8" Color="#000000" Opacity="0.3" OffsetX="0" OffsetY="1"/>
+            </TextBlock.Effect>
+        </TextBlock>
+    </Grid>
+</UserControl>

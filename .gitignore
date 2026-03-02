@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+publish/
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials (не комітити!)
+*.pfx
+*.key
+
+# Logs
+*.log
+
+# NuGet
+packages/
+
+# Self-contained publish artifacts
+*.exe
+!build.sh
