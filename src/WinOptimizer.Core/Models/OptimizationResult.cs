@@ -26,6 +26,9 @@ public class OptimizationResult
     /// <summary>Чи оновлено драйвери</summary>
     public bool DriversUpdated { get; set; }
 
+    /// <summary>Кількість debloat оптимізацій (registry tweaks)</summary>
+    public int DebloatTweaksCount { get; set; }
+
     /// <summary>Вільне місце до</summary>
     public long FreeSpaceBefore { get; set; }
 

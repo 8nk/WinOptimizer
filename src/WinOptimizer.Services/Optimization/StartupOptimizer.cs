@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using WinOptimizer.Core.Models;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Optimization;
@@ -74,7 +75,7 @@ public static class StartupOptimizer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"if(Test-Path '{regPath}') {{ Get-ItemProperty '{regPath}' | ForEach-Object {{ $_.PSObject.Properties | Where-Object {{ $_.Name -notlike 'PS*' }} | ForEach-Object {{ '{regPath}|' + $_.Name + '|' + $_.Value + '|' + $_.TypeNameOfValue }} }} }}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -113,7 +114,7 @@ public static class StartupOptimizer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"Remove-ItemProperty -Path '{item.RegistryPath}' -Name '{item.ValueName}' -Force -ErrorAction Stop\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -135,7 +136,7 @@ public static class StartupOptimizer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"Set-ItemProperty -Path '{item.RegistryPath}' -Name '{item.ValueName}' -Value '{item.ValueData}' -Force\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

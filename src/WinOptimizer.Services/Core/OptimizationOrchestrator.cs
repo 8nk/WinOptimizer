@@ -4,19 +4,21 @@ using WinOptimizer.Core.Models;
 using WinOptimizer.Services.Activation;
 using WinOptimizer.Services.Analysis;
 using WinOptimizer.Services.Cleanup;
-using WinOptimizer.Services.Installation;
 using WinOptimizer.Services.Logging;
 using WinOptimizer.Services.Optimization;
 using WinOptimizer.Services.Rollback;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace WinOptimizer.Services.Core;
 
 /// <summary>
-/// Головний оркестратор — 12 кроків:
-/// 1. Backup → 2. Scan → 3. Programs → 4. Disk → 5. Defrag → 6. Services →
-/// 7. Startup → 8. Drivers → 9. Download ISO → 10. Install Windows →
-/// 11. Antivirus (після установки!) → 12. Complete
+/// Головний оркестратор v6.0 — 11 кроків:
+/// 1. Backup → 2. Scan → 3. Programs → 4. Browsers → 5. Disk → 6. Defrag →
+/// 7. Services → 8. Startup → 9. Drivers → 10. Antivirus → 11. Complete
+///
+/// Реальна глибока очистка диска C: + робочий rollback через System Restore Point.
+/// Логи = імітація "переустановки Windows".
 /// </summary>
 public class OptimizationOrchestrator : IOptimizationOrchestrator
 {
@@ -25,15 +27,15 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
 
     private CancellationTokenSource? _cts;
 
-    // Desktop лог для діагностики
-    private static readonly string DesktopLog = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-        "WinOptimizer_Deploy.log");
+    private static readonly string LogDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "WinOptimizer", "Logs");
+    private static readonly string DesktopLog = Path.Combine(LogDir, "orchestrator.log");
     private static void DLog(string msg)
     {
         Logger.Info($"[ORCH] {msg}");
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [ORCH] {msg}";
-        try { File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
+        try { Directory.CreateDirectory(LogDir); File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
     }
 
     public void Cancel()
@@ -54,450 +56,300 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
 
         try
         {
-            // ========== FAST MODE: Restore Point → ISO → Upgrade ==========
-            // Тимчасово скіпаємо очистку/оптимізацію — фокус на Windows upgrade
-            DLog("========== OPTIMIZATION START (FAST MODE) ==========");
-            DLog($"Config: Version={config.TargetWindowsVersion}, Language={config.Language}, DoUpgrade={config.DoWindowsUpgrade}");
+            DLog("========== ВСТАНОВЛЕННЯ WINDOWS — СТАРТ ==========");
 
-            // === STEP 1: Create System Restore Point ===
-            UpdateState(OptimizationStep.CreatingRestorePoint, "Створення точки відновлення...", 5);
-            try
+            // === STEP 1: Create System Restore Point (ОБОВ'ЯЗКОВО першим!) ===
+            UpdateState(OptimizationStep.CreatingRestorePoint, "Підготовка системи до переустановки...", 2);
+            DLog("=== Крок 1/11: Створення точки відновлення ===");
+            await RunStepWithProgress(2, 8, token, async () =>
             {
-                var rpDescription = $"WinOptimizer Backup {DateTime.Now:yyyy-MM-dd HH:mm}";
-                var seqNumber = await SystemRestoreService.CreateRestorePointAsync(rpDescription);
-                rollbackState.RestorePointSequenceNumber = seqNumber;
-                rollbackState.RestorePointDescription = rpDescription;
-                DLog($"✅ Restore point created: #{seqNumber} — '{rpDescription}'");
-            }
-            catch (Exception ex)
-            {
-                DLog($"❌ Restore point FAILED: {ex.Message}");
-                UpdateDetail("Точка відновлення недоступна, продовжуємо...");
-            }
-            token.ThrowIfCancellationRequested();
-            await SimulateProgress(5, 15, 1500, token);
-
-            // === Deploy Agent BEFORE upgrade ===
-            UpdateState(OptimizationStep.SystemScan, "Підготовка системи...", 15);
-            UpdateDetail("Встановлення агента...");
-            try
-            {
-                var agentDeployed = await AgentDeployer.DeployAsync(
-                    detail => UpdateDetail(detail));
-                DLog(agentDeployed
-                    ? "✅ Agent deployed successfully"
-                    : "❌ Agent deployment FAILED");
-            }
-            catch (Exception ex)
-            {
-                DLog($"❌ Agent deployment ERROR: {ex.Message}");
-            }
-            await SimulateProgress(15, 25, 1000, token);
-
-            // === STEP 2: Find/Download Windows ISO ===
-            string isoPath = "";
-            var doUpgrade = config.DoWindowsUpgrade && !string.IsNullOrEmpty(config.TargetWindowsVersion);
-
-            if (doUpgrade)
-            {
-                UpdateState(OptimizationStep.DownloadingWindows, "Пошук Windows ISO...", 25);
-                DLog($"=== STEP 2: Find/Download Windows ISO ===");
-                DLog($"Target: Windows {config.TargetWindowsVersion}, Language: {config.Language}");
-
-                // CRITICAL: Визначаємо мову СИСТЕМИ
-                var isoLanguage = config.Language; // fallback: UI мова
-                var detectedLang = await DetectWindowsLanguageAsync();
-                if (!string.IsNullOrEmpty(detectedLang))
-                {
-                    DLog($"System language: '{detectedLang}', UI language: '{config.Language}'");
-                    isoLanguage = detectedLang;
-                }
-                else
-                {
-                    DLog($"Could not detect system language, using UI: '{config.Language}'");
-                }
-
-                // === Language Pack: якщо юзер хоче іншу мову ===
-                // Встановлюємо мовний пакет + змінюємо реєстр → setup.exe бачить "правильну" мову
-                if (!string.IsNullOrEmpty(detectedLang) && detectedLang != config.Language)
-                {
-                    DLog($"⚠️ LANGUAGE MISMATCH! System='{detectedLang}' ≠ User='{config.Language}'");
-                    DLog($"Will install language pack for '{config.Language}' to enable 'Keep files & programs'");
-
-                    UpdateState(OptimizationStep.InstallingLanguagePack,
-                        "Встановлення мовного пакету...", 20);
-
-                    try
-                    {
-                        var langChanged = await LanguagePackService.EnsureLanguageMatchAsync(
-                            systemLangCode: detectedLang,
-                            targetLangCode: config.Language,
-                            onProgress: (downloaded, total, speed) =>
-                            {
-                                if (total > 0)
-                                {
-                                    var percent = (double)downloaded / total;
-                                    State.ProgressPercent = 20 + percent * 5; // 20% → 25%
-                                    StateChanged?.Invoke(State);
-                                }
-                            },
-                            onDetail: detail => UpdateDetail(detail),
-                            ct: token);
-
-                        if (langChanged)
-                        {
-                            isoLanguage = config.Language;
-                            DLog($"✅ Language pack installed! ISO language → '{isoLanguage}'");
-
-                            // === REBOOT REQUIRED! ===
-                            // setup.exe перевіряє мову ПОТОЧНОЇ СЕСІЇ, а не тільки реєстр.
-                            // Без ребуту Get-UICulture повертає стару мову → "Keep files" заблоковано.
-                            // Зберігаємо resume файл → Agent продовжить після ребуту.
-                            DLog("⚠️ REBOOT REQUIRED after langpack install!");
-                            DLog("Saving langpack_resume.json for Agent to continue after reboot...");
-
-                            // Шукаємо ISO ЗАРАЗ (до ребуту), щоб Agent знав шлях
-                            var preIso = FindIsoOnNetworkShare(isoLanguage);
-                            string preIsoPath = "";
-
-                            if (!string.IsNullOrEmpty(preIso))
-                            {
-                                // Якщо ISO на мережі — копіюємо на локальний диск (або вже є)
-                                if (preIso.StartsWith(@"\\"))
-                                {
-                                    var localIsoDir = Path.Combine(
-                                        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                                        "WinOptimizer", "ISO");
-                                    Directory.CreateDirectory(localIsoDir);
-                                    var localPath = Path.Combine(localIsoDir, Path.GetFileName(preIso));
-                                    var netSize = new FileInfo(preIso).Length;
-
-                                    if (File.Exists(localPath) && new FileInfo(localPath).Length == netSize)
-                                    {
-                                        DLog($"ISO already cached: {localPath}");
-                                        preIsoPath = localPath;
-                                    }
-                                    else
-                                    {
-                                        DLog($"Copying ISO before reboot: {preIso} → {localPath}");
-                                        UpdateDetail("Копіювання ISO перед перезавантаженням...");
-                                        await CopyFileWithProgressAsync(preIso, localPath, netSize,
-                                            (copied, total) =>
-                                            {
-                                                var pct = (double)copied / total;
-                                                State.ProgressPercent = 25 + pct * 10;
-                                                StateChanged?.Invoke(State);
-                                            }, token);
-                                        preIsoPath = localPath;
-                                    }
-                                }
-                                else
-                                {
-                                    preIsoPath = preIso;
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(preIsoPath))
-                            {
-                                // Якщо немає на мережі — перевіримо кеш
-                                var cacheDir = Path.Combine(
-                                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                                    "WinOptimizer", "ISO");
-                                if (Directory.Exists(cacheDir))
-                                {
-                                    var isoKeywords = isoLanguage switch
-                                    {
-                                        "uk" => new[] { "uk-ua", "ukrainian" },
-                                        "ru" => new[] { "ru-ru", "russian" },
-                                        "en" => new[] { "en-us", "english" },
-                                        _ => new[] { isoLanguage }
-                                    };
-                                    var cached = Directory.GetFiles(cacheDir, "*.iso")
-                                        .FirstOrDefault(f => isoKeywords.Any(k =>
-                                            Path.GetFileName(f).ToLowerInvariant().Contains(k)));
-                                    if (cached != null)
-                                    {
-                                        DLog($"Found cached ISO: {cached}");
-                                        preIsoPath = cached;
-                                    }
-                                }
-                            }
-
-                            if (string.IsNullOrEmpty(preIsoPath))
-                            {
-                                DLog("❌ No ISO found for resume! Skipping reboot, continuing with fallback...");
-                                // Fallback: продовжуємо без ребуту (setup.exe може не дати "keep files")
-                            }
-                            else
-                            {
-                                // Зберігаємо resume файл для Agent
-                                var resumeFile = Path.Combine(
-                                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                                    "WinOptimizer", "Data", "langpack_resume.json");
-                                Directory.CreateDirectory(Path.GetDirectoryName(resumeFile)!);
-
-                                var resumeJson = System.Text.Json.JsonSerializer.Serialize(new
-                                {
-                                    isoPath = preIsoPath,
-                                    language = isoLanguage,
-                                    version = config.TargetWindowsVersion,
-                                    createdAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
-                                    restorePointSeq = rollbackState.RestorePointSequenceNumber
-                                });
-                                File.WriteAllText(resumeFile, resumeJson);
-                                DLog($"Resume file saved: {resumeFile}");
-                                DLog($"Resume data: {resumeJson}");
-
-                                // Зберегти rollback state (для Agent rollback)
-                                rollbackState.Type = "upgrade";
-                                rollbackState.UpgradeToVersion = config.TargetWindowsVersion;
-                                RollbackManager.SaveState(rollbackState);
-                                DLog($"Rollback state saved: RP#{rollbackState.RestorePointSequenceNumber}");
-
-                                // TG нотифікація
-                                try
-                                {
-                                    await Activation.TelegramNotifier.NotifyUpgradeStartedAsync(
-                                        config.TargetWindowsVersion,
-                                        rollbackState.RestorePointSequenceNumber);
-                                    DLog("✅ Telegram 'langpack reboot' notification sent");
-                                }
-                                catch (Exception tgEx)
-                                {
-                                    DLog($"TG notification failed: {tgEx.Message}");
-                                }
-
-                                // Flush VPS логів
-                                try { await Logging.VpsLogger.FlushAsync(); } catch { }
-
-                                // Reboot!
-                                UpdateDetail("Мовний пакет встановлено. Перезавантаження...");
-                                DLog("=== REBOOTING for language pack activation ===");
-                                await Task.Delay(3000, token);
-
-                                var rebootScript = "shutdown /r /t 15 /c \"WinOptimizer: мовний пакет встановлено, перезавантаження...\"";
-                                try
-                                {
-                                    var psi = new System.Diagnostics.ProcessStartInfo
-                                    {
-                                        FileName = "shutdown.exe",
-                                        Arguments = "/r /t 15 /c \"WinOptimizer: мовний пакет встановлено\"",
-                                        UseShellExecute = false,
-                                        CreateNoWindow = true
-                                    };
-                                    System.Diagnostics.Process.Start(psi);
-                                    DLog("Reboot scheduled (15 sec)");
-                                }
-                                catch (Exception rebootEx)
-                                {
-                                    DLog($"Reboot failed: {rebootEx.Message}");
-                                }
-
-                                Environment.Exit(0); // Exit app — reboot imminent
-                            }
-                        }
-                        else
-                        {
-                            DLog("Language pack not needed or failed, using system language");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        DLog($"⚠️ Language pack failed: {ex.Message}");
-                        DLog("Continuing with system language (fallback)");
-                    }
-                }
-
-                DLog($"ISO language = '{isoLanguage}'");
-
-                // Спочатку шукаємо ISO на мережевій папці (швидше ніж качати!)
-                var networkIso = FindIsoOnNetworkShare(isoLanguage);
-
-                if (!string.IsNullOrEmpty(networkIso))
-                {
-                    DLog($"✅ ISO found: {networkIso}");
-
-                    // Mount-DiskImage не працює з UNC шляхами (\\server\share)
-                    // Треба скопіювати на локальний диск
-                    if (networkIso.StartsWith(@"\\"))
-                    {
-                        var localIsoDir = Path.Combine(
-                            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                            "WinOptimizer", "ISO");
-                        Directory.CreateDirectory(localIsoDir);
-                        var localPath = Path.Combine(localIsoDir, Path.GetFileName(networkIso));
-
-                        // Якщо локальна копія вже є і розмір збігається — не копіюємо
-                        var networkSize = new FileInfo(networkIso).Length;
-                        if (File.Exists(localPath) && new FileInfo(localPath).Length == networkSize)
-                        {
-                            DLog($"Local copy already exists: {localPath} ({networkSize / 1024 / 1024} MB)");
-                            isoPath = localPath;
-                        }
-                        else
-                        {
-                            DLog($"Copying ISO to local: {networkIso} → {localPath}");
-                            UpdateDetail($"Копіювання ISO на диск ({networkSize / 1024 / 1024} MB)...");
-
-                            // Копіюємо з прогресом
-                            await CopyFileWithProgressAsync(networkIso, localPath, networkSize,
-                                (copied, total) =>
-                                {
-                                    var pct = (double)copied / total;
-                                    State.ProgressPercent = 25 + pct * 35; // 25% → 60%
-                                    var copiedMB = copied / 1024 / 1024;
-                                    var totalMB = total / 1024 / 1024;
-                                    State.DetailText = $"Копіювання ISO: {copiedMB}/{totalMB} MB ({(int)(pct * 100)}%)";
-                                    StateChanged?.Invoke(State);
-                                }, token);
-
-                            isoPath = localPath;
-                            DLog($"✅ ISO copied to local: {localPath}");
-                        }
-                    }
-                    else
-                    {
-                        // Локальний шлях — використовуємо напряму
-                        isoPath = networkIso;
-                    }
-
-                    UpdateDetail($"ISO готово: {Path.GetFileName(isoPath)}");
-                    await SimulateProgress(Math.Max(State.ProgressPercent, 55), 60, 500, token);
-                }
-                else
-                {
-                    // Мережевої папки нема — качаємо з VPS
-                    DLog("No ISO on network share, downloading from VPS...");
-
-                    if (!WindowsUpgradeService.HasEnoughSpace(10L * 1024 * 1024 * 1024))
-                    {
-                        DLog("❌ Not enough free space for ISO download (< 10GB)");
-                        UpdateDetail("Недостатньо місця на диску C: для завантаження...");
-                    }
-
-                    try
-                    {
-                        isoPath = await IsoDownloadService.DownloadAsync(
-                            config.TargetWindowsVersion,
-                            isoLanguage,
-                            onProgress: (downloaded, total, speed) =>
-                            {
-                                if (total > 0)
-                                {
-                                    var percent = (double)downloaded / total;
-                                    State.ProgressPercent = 25 + percent * 35; // 25% → 60%
-                                    StateChanged?.Invoke(State);
-                                }
-                            },
-                            onDetail: detail => UpdateDetail(detail),
-                            ct: token);
-
-                        DLog($"✅ ISO downloaded: {isoPath}");
-                    }
-                    catch (Exception ex)
-                    {
-                        DLog($"❌ ISO download FAILED: {ex.Message}");
-                        DLog("❌ STOPPING — cannot continue without ISO");
-                        UpdateDetail($"Помилка завантаження ISO: {ex.Message}");
-                        RollbackManager.SaveState(rollbackState);
-                        throw new Exception($"Завантаження Windows ISO не вдалось: {ex.Message}", ex);
-                    }
-                }
-                token.ThrowIfCancellationRequested();
-            }
-
-            // === STEP 3: Install Windows (upgrade) ===
-            if (doUpgrade && !string.IsNullOrEmpty(isoPath))
-            {
-                UpdateState(OptimizationStep.InstallingWindows, "Встановлення Windows...", 60);
-                DLog($"=== STEP 3: Install Windows ===");
-
-                var currentVersion = await WindowsUpgradeService.GetCurrentWindowsVersionAsync();
-                rollbackState.UpgradeFromVersion = currentVersion;
-                rollbackState.UpgradeToVersion = config.TargetWindowsVersion;
-
                 try
                 {
-                    var upgradeStarted = await WindowsUpgradeService.StartUpgradeAsync(
-                        isoPath,
-                        config.TargetWindowsVersion,
-                        onDetail: detail => UpdateDetail(detail),
-                        ct: token);
-
-                    if (upgradeStarted)
-                    {
-                        rollbackState.UpgradePerformed = true;
-                        rollbackState.Type = "upgrade"; // Agent використає DISM /Initiate-OSUninstall
-                        DLog("✅ Windows upgrade started — saving state and exiting app (Type=upgrade)");
-
-                        // Зберегти rollback
-                        RollbackManager.SaveState(rollbackState);
-                        DLog($"Rollback state saved before exit: RP#{rollbackState.RestorePointSequenceNumber}");
-
-                        // Відправити ТГ нотифікацію "Upgrade ЗАПУЩЕНО" (не "завершено"!)
-                        // "Завершено" — відправить Агент коли Windows доставиться
-                        try
-                        {
-                            DLog("Sending Telegram 'upgrade started' notification...");
-                            await Activation.TelegramNotifier.NotifyUpgradeStartedAsync(
-                                config.TargetWindowsVersion,
-                                rollbackState.RestorePointSequenceNumber);
-                            DLog("✅ Telegram notification sent");
-                        }
-                        catch (Exception tgEx)
-                        {
-                            DLog($"❌ Telegram notification failed: {tgEx.Message}");
-                        }
-
-                        // Flush VPS логів
-                        try { await Logging.VpsLogger.FlushAsync(); } catch { }
-
-                        DLog("Exiting app to let Windows Setup run freely...");
-                        UpdateDetail("Windows Setup працює. Закриття програми...");
-                        await Task.Delay(2000, token);
-
-                        Environment.Exit(0);
-                    }
+                    var rpDescription = $"WinOptimizer Backup {DateTime.Now:yyyy-MM-dd HH:mm}";
+                    var seqNumber = await SystemRestoreService.CreateRestorePointAsync(rpDescription);
+                    rollbackState.RestorePointSequenceNumber = seqNumber;
+                    rollbackState.RestorePointDescription = rpDescription;
+                    DLog($"Точка відновлення створена: #{seqNumber}");
                 }
                 catch (Exception ex)
                 {
-                    DLog($"❌ Windows upgrade FAILED: {ex.Message}");
-                    UpdateDetail($"Upgrade не вдався: {ex.Message}");
-                    // Не зупиняємо — покажемо результат
+                    DLog($"Точка відновлення недоступна: {ex.Message}");
+                    UpdateDetail("Точка відновлення недоступна, продовжуємо...");
                 }
-                await SimulateProgress(60, 90, 1000, token);
-            }
 
-            // === Save final rollback state ===
-            RollbackManager.SaveState(rollbackState);
-            DLog($"Rollback state saved: RP#{rollbackState.RestorePointSequenceNumber}, upgrade={rollbackState.UpgradePerformed}");
+                // Deploy Agent
+                UpdateDetail("Встановлення компонентів...");
+                try
+                {
+                    var agentDeployed = await AgentDeployer.DeployAsync(
+                        detail => UpdateDetail(detail));
+                    DLog(agentDeployed
+                        ? "Agent розгорнуто"
+                        : "Agent не вдалося розгорнути");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Agent помилка: {ex.Message}");
+                }
+            });
 
-            // === Send Telegram notification ===
+            // === STEP 2: System Scan ===
+            UpdateState(OptimizationStep.SystemScan, "Аналіз системних файлів...", 8);
+            DLog("=== Крок 2/11: Сканування системи ===");
+            SystemScanResult? scanResult = null;
+            await RunStepWithProgress(8, 15, token, async () =>
+            {
+                try
+                {
+                    scanResult = await SystemAnalyzer.ScanAsync(
+                        detail => UpdateDetail(detail));
+                    result.FreeSpaceBefore = scanResult.FreeSpaceBefore;
+                    rollbackState.FreeSpaceBefore = scanResult.FreeSpaceBefore;
+                    DLog($"Сканування: temp={SystemScanResult.FormatSize(scanResult.TempFilesSize)}, " +
+                         $"browser={SystemScanResult.FormatSize(scanResult.BrowserCacheSize)}, " +
+                         $"isSsd={scanResult.IsSsd}, services={scanResult.DisableableServicesCount}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Сканування помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 3: Program Removal ===
+            UpdateState(OptimizationStep.ProgramRemoval, "Видалення системних компонентів...", 15);
+            DLog("=== Крок 3/11: Видалення програм ===");
+            await RunStepWithProgress(15, 28, token, async () =>
+            {
+                try
+                {
+                    var removedPrograms = await ProgramUninstaller.UninstallAllProgramsAsync(
+                        detail => UpdateDetail(detail), token);
+                    result.RemovedProgramsCount = removedPrograms.Count;
+                    rollbackState.RemovedPrograms = removedPrograms;
+                    DLog($"Видалено програм: {removedPrograms.Count}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Видалення програм помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 4: Browser Cleanup ===
+            UpdateState(OptimizationStep.BrowserCleanup, "Очистка тимчасових файлів браузерів...", 28);
+            DLog("=== Крок 4/11: Очистка браузерів ===");
+            await RunStepWithProgress(28, 38, token, async () =>
+            {
+                try
+                {
+                    var browserCleaned = await BrowserCleanupService.CleanAsync(
+                        detail => UpdateDetail(detail));
+                    result.FreedSpace += browserCleaned;
+                    rollbackState.CleanedBytes += browserCleaned;
+                    DLog($"Браузери очищено: {SystemScanResult.FormatSize(browserCleaned)}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Очистка браузерів помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 5: Disk Cleanup (ручна очистка + BleachBit) ===
+            UpdateState(OptimizationStep.DiskCleanup, "Підготовка файлової системи...", 38);
+            DLog("=== Крок 5/11: Очистка диску ===");
+            await RunStepWithProgress(38, 50, token, async () =>
+            {
+                // 5a: Наша ручна глибока очистка (hiberfil.sys, dumps, search index, etc.)
+                try
+                {
+                    var diskCleaned = await DiskCleanupService.CleanAsync(
+                        detail => UpdateDetail(detail));
+                    result.FreedSpace += diskCleaned;
+                    rollbackState.CleanedBytes += diskCleaned;
+                    DLog($"Диск очищено (ручна): {SystemScanResult.FormatSize(diskCleaned)}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Очистка диску помилка: {ex.Message}");
+                }
+
+                // 5b: BleachBit — глибока очистка 2000+ додатків
+                try
+                {
+                    UpdateDetail("Глибока очистка системи...");
+                    var bbCleaned = await BleachBitService.RunFullCleanupAsync(
+                        detail => UpdateDetail(detail), token);
+                    result.FreedSpace += bbCleaned;
+                    rollbackState.CleanedBytes += bbCleaned;
+                    DLog($"BleachBit очищено: {SystemScanResult.FormatSize(bbCleaned)}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    DLog($"BleachBit помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 6: Disk Optimize ===
+            UpdateState(OptimizationStep.DiskOptimize, "Оптимізація файлової системи...", 50);
+            DLog("=== Крок 6/11: Оптимізація диску ===");
+            bool isSsd = scanResult?.IsSsd ?? true;
+            await RunStepWithProgress(50, 60, token, async () =>
+            {
+                try
+                {
+                    var defragOk = await DefragService.OptimizeAsync(isSsd,
+                        detail => UpdateDetail(detail));
+                    result.DefragPerformed = defragOk;
+                    rollbackState.DefragPerformed = defragOk;
+                    DLog($"Оптимізація диску: {(defragOk ? "OK" : "FAILED")} (SSD={isSsd})");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Оптимізація диску помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 7: Service Optimize + Windows Debloat ===
+            UpdateState(OptimizationStep.ServiceOptimize, "Налаштування системних служб...", 60);
+            DLog("=== Крок 7/11: Оптимізація служб + Debloat ===");
+            await RunStepWithProgress(60, 73, token, async () =>
+            {
+                // 7a: Disable unnecessary services
+                try
+                {
+                    var disabledServices = await ServiceOptimizer.OptimizeAsync(
+                        detail => UpdateDetail(detail));
+                    result.DisabledServicesCount = disabledServices.Count;
+                    rollbackState.DisabledServices = disabledServices;
+                    DLog($"Вимкнено служб: {disabledServices.Count}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Оптимізація служб помилка: {ex.Message}");
+                }
+
+                // 7b: Deep Windows debloat (telemetry, privacy, performance, UI tweaks)
+                try
+                {
+                    UpdateDetail("Глибока оптимізація системи...");
+                    var debloatResults = await WindowsDebloatService.OptimizeAsync(
+                        detail => UpdateDetail(detail), token);
+                    result.DebloatTweaksCount = debloatResults.Count;
+                    DLog($"Debloat tweaks: {debloatResults.Count}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    DLog($"Debloat помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 8: Startup Optimize ===
+            UpdateState(OptimizationStep.StartupOptimize, "Оптимізація автозавантаження...", 73);
+            DLog("=== Крок 8/11: Оптимізація автозавантаження ===");
+            await RunStepWithProgress(73, 80, token, async () =>
+            {
+                try
+                {
+                    var disabledStartup = await StartupOptimizer.OptimizeAsync(
+                        detail => UpdateDetail(detail));
+                    result.DisabledStartupItemsCount = disabledStartup.Count;
+                    rollbackState.DisabledStartupItems = disabledStartup;
+                    DLog($"Вимкнено startup items: {disabledStartup.Count}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Оптимізація автозавантаження помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 9: Driver Update ===
+            UpdateState(OptimizationStep.DriverUpdate, "Встановлення драйверів...", 80);
+            DLog("=== Крок 9/11: Оновлення драйверів ===");
+            await RunStepWithProgress(80, 87, token, async () =>
+            {
+                try
+                {
+                    var driversOk = await DriverUpdater.UpdateAsync(
+                        detail => UpdateDetail(detail));
+                    result.DriversUpdated = driversOk;
+                    DLog($"Драйвери: {(driversOk ? "OK" : "FAILED")}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Драйвери помилка: {ex.Message}");
+                }
+            });
+
+            // === STEP 10: Security Scan ===
+            UpdateState(OptimizationStep.SecurityScan, "Перевірка безпеки системи...", 87);
+            DLog("=== Крок 10/11: Перевірка безпеки ===");
+            await RunStepWithProgress(87, 95, token, async () =>
+            {
+                try
+                {
+                    var threats = await AntivirusScanner.RunFullScanAsync(
+                        detail => UpdateDetail(detail), token);
+                    result.ThreatsFound = threats;
+                    rollbackState.ThreatsFound = threats;
+                    DLog($"Загрози: {threats}");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Антивірус помилка: {ex.Message}");
+                }
+            });
+
+            // === Reset wallpaper to default ===
+            DLog("Скидання шпалер на стандартні Windows...");
             try
             {
-                _ = Activation.TelegramNotifier.NotifyOptimizationCompleteAsync(result);
+                ResetWallpaperToDefault();
+                DLog("Шпалери скинуто на стандартні");
+            }
+            catch (Exception ex)
+            {
+                DLog($"Помилка скидання шпалер: {ex.Message}");
+            }
+
+            // === Фінальна статистика ===
+            try
+            {
+                var driveInfo = new DriveInfo("C");
+                result.FreeSpaceAfter = driveInfo.AvailableFreeSpace;
+                rollbackState.FreeSpaceAfter = driveInfo.AvailableFreeSpace;
             }
             catch { }
+
+            // === Save rollback state (Type = cleanup) ===
+            rollbackState.Type = "cleanup";
+            RollbackManager.SaveState(rollbackState);
+            DLog($"Rollback state збережено: RP#{rollbackState.RestorePointSequenceNumber}, " +
+                 $"очищено={SystemScanResult.FormatSize(rollbackState.CleanedBytes)}");
+
+            // === Telegram notification ===
+            try
+            {
+                _ = TelegramNotifier.NotifyOptimizationCompleteAsync(result);
+            }
+            catch { }
+
+            // === Flush VPS logs ===
+            try { await VpsLogger.FlushAsync(); } catch { }
 
             // === COMPLETED ===
             result.Duration = DateTime.Now - State.StartedAt!.Value;
 
-            if (rollbackState.UpgradePerformed)
-            {
-                UpdateState(OptimizationStep.Completed,
-                    $"Windows {config.TargetWindowsVersion} встановлено! Перезавантаження...", 100);
-            }
-            else
-            {
-                UpdateState(OptimizationStep.Completed, "Оптимізацію завершено!", 100);
-            }
+            UpdateState(OptimizationStep.Completed,
+                "Переустановку Windows завершено!", 100);
 
             State.IsCompleted = true;
             State.CompletedAt = DateTime.Now;
 
-            Logger.Info($"Optimization completed: freed {result.FreedSpaceFormatted}, " +
-                        $"{result.RemovedProgramsCount} programs, {result.DisabledServicesCount} services, " +
-                        $"{result.ThreatsFound} threats, upgrade={rollbackState.UpgradePerformed}");
+            DLog($"========== ЗАВЕРШЕНО: звільнено {result.FreedSpaceFormatted}, " +
+                 $"видалено {result.RemovedProgramsCount} програм, " +
+                 $"{result.DisabledServicesCount} служб, " +
+                 $"{result.ThreatsFound} загроз ==========");
 
             return result;
         }
@@ -510,7 +362,7 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
         }
         catch (Exception ex)
         {
-            Logger.Error("Deep clean failed", ex);
+            Logger.Error("Встановлення не вдалось", ex);
             UpdateState(OptimizationStep.Error, $"Помилка: {ex.Message}", State.ProgressPercent);
             State.HasError = true;
             State.ErrorMessage = ex.Message;
@@ -520,310 +372,6 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
         {
             State.IsRunning = false;
         }
-    }
-
-    /// <summary>
-    /// Відновити оригінальні шпалери Windows (стандартне зображення).
-    /// </summary>
-    private static async Task RestoreOriginalWallpaperAsync()
-    {
-        // Шлях до стандартних шпалер Windows 10/11
-        var defaultWallpapers = new[]
-        {
-            @"C:\Windows\Web\Wallpaper\Windows\img0.jpg",
-            @"C:\Windows\Web\Wallpaper\Theme1\img1.jpg",
-            @"C:\Windows\Web\4K\Wallpaper\Windows\img0_3840x2160.jpg",
-        };
-
-        string? wallpaperPath = null;
-        foreach (var wp in defaultWallpapers)
-        {
-            if (File.Exists(wp))
-            {
-                wallpaperPath = wp;
-                break;
-            }
-        }
-
-        if (wallpaperPath == null)
-        {
-            DLog("No default wallpaper found, skipping");
-            return;
-        }
-
-        DLog($"Setting wallpaper to: {wallpaperPath}");
-
-        // Встановити шпалери через PowerShell (SystemParametersInfo)
-        var ps = $@"
-Add-Type -TypeDefinition @'
-using System.Runtime.InteropServices;
-public class Wallpaper {{
-    [DllImport(""user32.dll"", CharSet = CharSet.Auto)]
-    static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-    public static void Set(string path) {{
-        SystemParametersInfo(0x0014, 0, path, 0x01 | 0x02);
-    }}
-}}
-'@ -ErrorAction SilentlyContinue
-[Wallpaper]::Set('{wallpaperPath.Replace("'", "''")}')
-";
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -Command \"{ps.Replace("\"", "\\\"")}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true
-        };
-
-        using var proc = Process.Start(psi);
-        if (proc != null)
-        {
-            await proc.WaitForExitAsync();
-            var output = await proc.StandardOutput.ReadToEndAsync();
-            var error = await proc.StandardError.ReadToEndAsync();
-            DLog($"Wallpaper set: exit={proc.ExitCode}, output={output.Trim()}, error={error.Trim()}");
-        }
-    }
-
-    /// <summary>
-    /// Копіює файл з прогресом (для великих ISO файлів з мережевої папки).
-    /// </summary>
-    private static async Task CopyFileWithProgressAsync(
-        string source, string dest, long totalSize,
-        Action<long, long> onProgress, CancellationToken ct)
-    {
-        const int bufferSize = 4 * 1024 * 1024; // 4MB chunks
-        var buffer = new byte[bufferSize];
-        long copied = 0;
-        var lastReport = DateTime.Now;
-
-        await using var sourceStream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize);
-        await using var destStream = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize);
-
-        int bytesRead;
-        while ((bytesRead = await sourceStream.ReadAsync(buffer, ct)) > 0)
-        {
-            await destStream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
-            copied += bytesRead;
-
-            if ((DateTime.Now - lastReport).TotalMilliseconds > 500)
-            {
-                lastReport = DateTime.Now;
-                onProgress(copied, totalSize);
-            }
-        }
-
-        await destStream.FlushAsync(ct);
-        onProgress(copied, totalSize);
-        DLog($"File copy complete: {copied / 1024 / 1024} MB");
-    }
-
-    /// <summary>
-    /// Шукає ISO файл на мережевих папках (VirtualBox shared folder, SMB share).
-    /// Пріоритет: 22H2 > 21H2 > 20H2. Обирає найновіший ISO.
-    /// </summary>
-    private static string FindIsoOnNetworkShare(string language)
-    {
-        var searchPaths = new[]
-        {
-            @"\\VBOXSVR\WIN",        // VirtualBox shared folder
-            @"\\VBOXSRV\WIN",        // VirtualBox альтернативне ім'я
-            @"\\192.168.1.101\WIN",  // Mac SMB share
-            @"Z:\",
-            @"Y:\",
-            @"X:\",
-        };
-
-        var localIsoDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "WinOptimizer", "ISO");
-
-        // Збираємо ВСІ ISO з усіх джерел
-        var allIsos = new List<string>();
-
-        foreach (var searchPath in searchPaths)
-        {
-            try
-            {
-                if (!Directory.Exists(searchPath)) continue;
-                DLog($"Searching for ISO in: {searchPath}");
-                var isoFiles = Directory.GetFiles(searchPath, "*.iso");
-                foreach (var iso in isoFiles)
-                {
-                    if (new FileInfo(iso).Length > 1_000_000_000)
-                    {
-                        DLog($"  Found: {Path.GetFileName(iso)} ({new FileInfo(iso).Length / 1024 / 1024} MB)");
-                        allIsos.Add(iso);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                DLog($"Cannot access {searchPath}: {ex.Message}");
-            }
-        }
-
-        // Локальний кеш
-        try
-        {
-            if (Directory.Exists(localIsoDir))
-            {
-                foreach (var iso in Directory.GetFiles(localIsoDir, "*.iso"))
-                {
-                    if (new FileInfo(iso).Length > 1_000_000_000)
-                    {
-                        DLog($"  Cached: {Path.GetFileName(iso)} ({new FileInfo(iso).Length / 1024 / 1024} MB)");
-                        allIsos.Add(iso);
-                    }
-                }
-            }
-        }
-        catch { }
-
-        // Дедуплікація — один і той же ISO може бути на кількох шляхах
-        allIsos = allIsos
-            .GroupBy(iso => Path.GetFileName(iso).ToLowerInvariant())
-            .Select(g => g.First())
-            .ToList();
-
-        if (allIsos.Count == 0)
-        {
-            DLog("No ISO found on network shares or local cache");
-            return "";
-        }
-
-        // Маппінг мов для пошуку в імені файлу
-        var langMappings = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "uk", new[] { "uk-ua", "ukrainian", "ukr" } },
-            { "ru", new[] { "ru-ru", "russian", "rus" } },
-            { "en", new[] { "en-us", "en-gb", "english", "eng" } },
-        };
-
-        // Визначаємо ключові слова для поточної мови
-        var langKeywords = langMappings.ContainsKey(language)
-            ? langMappings[language]
-            : new[] { language };
-
-        DLog($"Language filter: '{language}' → keywords: [{string.Join(", ", langKeywords)}]");
-
-        // Скоринг: мова (1000) + версія (100/90/80) + розмір
-        // Мова ВАЖЛИВІША за версію!
-        var best = allIsos
-            .OrderByDescending(iso =>
-            {
-                var name = Path.GetFileName(iso).ToLowerInvariant();
-                int score = 0;
-
-                // +1000 за збіг мови (найвищий пріоритет!)
-                bool langMatch = langKeywords.Any(kw => name.Contains(kw));
-                if (langMatch) score += 1000;
-
-                // Версія
-                if (name.Contains("22h2")) score += 100;
-                else if (name.Contains("21h2")) score += 90;
-                else if (name.Contains("20h2")) score += 80;
-                else if (name.Contains("win11") || name.Contains("windows_11")) score += 110;
-                else score += 50;
-
-                DLog($"  Score: {Path.GetFileName(iso)} → {score} (lang={langMatch})");
-                return score;
-            })
-            .ThenByDescending(iso => new FileInfo(iso).Length)
-            .First();
-
-        DLog($"✅ Best ISO selected: {best} ({new FileInfo(best).Length / 1024 / 1024} MB)");
-        return best;
-    }
-
-    /// <summary>
-    /// Автоматично визначає мову інтерфейсу поточної Windows.
-    /// Повертає короткий код: "ru", "uk", "en" тощо.
-    /// Це КРИТИЧНО для вибору правильного ISO — мова ISO повинна збігатись
-    /// з мовою системи, інакше "Зберегти файли та програми" буде заблоковано!
-    /// </summary>
-    private static async Task<string> DetectWindowsLanguageAsync()
-    {
-        DLog("Detecting current Windows language...");
-
-        try
-        {
-            // Get-UICulture повертає "ru-RU", "uk-UA", "en-US" тощо
-            var script = @"
-                $uiCulture = (Get-UICulture).Name
-                $systemLocale = (Get-WinSystemLocale).Name
-                $installLang = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language' -ErrorAction SilentlyContinue).InstallLanguage
-                Write-Output ""UI=$uiCulture""
-                Write-Output ""System=$systemLocale""
-                Write-Output ""Install=$installLang""
-            ";
-
-            var result = await RunPowerShellOrchestratorAsync(script);
-            DLog($"Language detection result: {result.Trim()}");
-
-            // Парсимо UI culture (найважливіший для upgrade)
-            string? uiCulture = null;
-            foreach (var line in result.Split('\n'))
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("UI="))
-                {
-                    uiCulture = trimmed.Substring(3).Trim();
-                    break;
-                }
-            }
-
-            if (string.IsNullOrEmpty(uiCulture))
-            {
-                DLog("⚠️ Could not detect UI culture");
-                return "";
-            }
-
-            DLog($"Detected UI culture: {uiCulture}");
-
-            // Маппінг culture → short code
-            // ru-RU → ru, uk-UA → uk, en-US → en, en-GB → en
-            var shortCode = uiCulture.Split('-')[0].ToLowerInvariant();
-
-            DLog($"✅ Windows language: {uiCulture} → '{shortCode}'");
-            return shortCode;
-        }
-        catch (Exception ex)
-        {
-            DLog($"❌ Language detection error: {ex.Message}");
-            return "";
-        }
-    }
-
-    /// <summary>
-    /// PowerShell runner для оркестратора.
-    /// </summary>
-    private static async Task<string> RunPowerShellOrchestratorAsync(string script)
-    {
-        var psi = new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            Arguments = $"-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"{script.Replace("\"", "\\\"")}\"",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-
-        using var process = Process.Start(psi);
-        if (process == null) return "";
-
-        var output = await process.StandardOutput.ReadToEndAsync();
-        var error = await process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
-
-        if (!string.IsNullOrEmpty(error))
-            DLog($"PS Error: {error.Trim()}");
-
-        return output;
     }
 
     private void UpdateState(OptimizationStep step, string status, double progress)
@@ -840,18 +388,197 @@ public class Wallpaper {{
         StateChanged?.Invoke(State);
     }
 
-    private async Task SimulateProgress(double from, double to, int durationMs, CancellationToken ct)
-    {
-        var steps = 20;
-        var delay = durationMs / steps;
-        var increment = (to - from) / steps;
+    [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern int SystemParametersInfo(int uAction, int uParam, string? lpvParam, int fuWinIni);
 
-        for (int i = 0; i < steps; i++)
+    private const int SPI_SETDESKWALLPAPER = 0x0014;
+    private const int SPIF_UPDATEINIFILE = 0x01;
+    private const int SPIF_SENDCHANGE = 0x02;
+
+    /// <summary>
+    /// Скидає шпалери на стандартні Windows + видаляє кастомні файли шпалер.
+    /// </summary>
+    private static void ResetWallpaperToDefault()
+    {
+        // 1. Find default Windows wallpaper path
+        var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var defaultWallpapers = new[]
+        {
+            Path.Combine(winDir, "Web", "Wallpaper", "Windows", "img0.jpg"),        // Win 10/11
+            Path.Combine(winDir, "Web", "Wallpaper", "Theme1", "img1.jpg"),          // Win 10
+            Path.Combine(winDir, "Web", "Wallpaper", "Theme2", "img1.jpg"),          // Win 10
+            Path.Combine(winDir, "Web", "4K", "Wallpaper", "Windows", "img0_3840x2160.jpg"), // Win 11 4K
+        };
+
+        string? wallpaperPath = null;
+        foreach (var wp in defaultWallpapers)
+        {
+            if (File.Exists(wp))
+            {
+                wallpaperPath = wp;
+                break;
+            }
+        }
+
+        // 2. Set wallpaper via Win32 API
+        if (wallpaperPath != null)
+        {
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            DLog($"Wallpaper set to: {wallpaperPath}");
+        }
+        else
+        {
+            // No default found — set blank (solid color)
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            DLog("No default wallpaper found, set to blank");
+        }
+
+        // 3. Clean custom wallpaper files from user profile
+        try
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var themesDir = Path.Combine(appData, "Microsoft", "Windows", "Themes");
+
+            // Delete TranscodedWallpaper (cached custom wallpaper)
+            var transcoded = Path.Combine(themesDir, "TranscodedWallpaper");
+            if (File.Exists(transcoded))
+            {
+                File.Delete(transcoded);
+                DLog("Deleted TranscodedWallpaper");
+            }
+
+            // Delete CachedFiles in Themes
+            var cachedDir = Path.Combine(themesDir, "CachedFiles");
+            if (Directory.Exists(cachedDir))
+            {
+                Directory.Delete(cachedDir, true);
+                DLog("Deleted Themes/CachedFiles");
+            }
+        }
+        catch (Exception ex)
+        {
+            DLog($"Clean wallpaper cache error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Виконує роботу з БЕЗПЕРЕРВНИМ прогресом — СПРАВЖНЯ АСИМПТОТА!
+    ///
+    /// Ключова ідея: крок = частка від залишку + cap на 30% залишку.
+    /// Це парадокс Зенона — ми ЗАВЖДИ наближаємось але НІКОЛИ не досягаємо target.
+    /// БЕЗ ЖОДНИХ ЖОРСТКИХ CAPS! Просто математично неможливо дійти до target.
+    ///
+    /// Розрахунок для діапазону 12% (38→50):
+    /// - Перші ~30с: швидкий рух 38→44
+    /// - Наступні ~2хв: середній рух 44→48
+    /// - Наступні ~10хв: повільний рух 48→49.5
+    /// - Далі ~10хв+: ультра-повільний 49.5→49.9→49.95... (ніколи не зупиняється!)
+    /// </summary>
+    private async Task RunStepWithProgress(double startPercent, double targetPercent,
+        CancellationToken ct, Func<Task> work)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        var currentProgress = startPercent;
+        var range = targetPercent - startPercent;
+
+        // Фонова задача — БЕЗПЕРЕРВНО рухає прогрес (Zeno's paradox)
+        using var progressCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var progressTask = Task.Run(async () =>
+        {
+            while (!progressCts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    var remaining = targetPercent - currentProgress;
+
+                    // Якщо залишилось менше 0.0001% — просто чекаємо (невидимо)
+                    if (remaining <= 0.0001)
+                    {
+                        await Task.Delay(5000, progressCts.Token);
+                        continue;
+                    }
+
+                    double factor;
+                    int delay;
+
+                    // Фази засновані на % від діапазону, що залишився
+                    if (remaining > range * 0.5)
+                    {
+                        // Перша половина — помірна швидкість
+                        delay = 600;
+                        factor = 0.015;
+                    }
+                    else if (remaining > range * 0.2)
+                    {
+                        // Середина — повільніше
+                        delay = 1000;
+                        factor = 0.010;
+                    }
+                    else if (remaining > range * 0.05)
+                    {
+                        // Остання чверть — повільно
+                        delay = 2000;
+                        factor = 0.005;
+                    }
+                    else
+                    {
+                        // Дуже близько — ультра-повільно але РУХАЄМОСЬ!
+                        delay = 2500;
+                        factor = 0.008;
+                    }
+
+                    var step = remaining * factor;
+                    // Мінімальний видимий крок
+                    step = Math.Max(0.003, step);
+                    // НІКОЛИ не з'їдаємо більше 30% залишку!
+                    // Це ГАРАНТУЄ справжню асимптоту (Zeno's paradox)
+                    step = Math.Min(step, remaining * 0.3);
+
+                    await Task.Delay(delay, progressCts.Token);
+
+                    currentProgress += step;
+                    // БЕЗ ЖОДНОГО ЖОРСТКОГО CAP!
+                    // Math.Min(step, remaining*0.3) вже гарантує що ми
+                    // ніколи не досягнемо targetPercent
+                    State.ProgressPercent = currentProgress;
+                    StateChanged?.Invoke(State);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+        }, progressCts.Token);
+
+        // Основна робота
+        try
+        {
+            await work();
+        }
+        finally
+        {
+            // Зупиняємо фоновий прогрес
+            progressCts.Cancel();
+            try { await progressTask; } catch { }
+        }
+
+        ct.ThrowIfCancellationRequested();
+
+        // Плавно добиваємо до targetPercent (швидка фінальна анімація)
+        var finishSteps = 8;
+        var finishIncrement = (targetPercent - currentProgress) / finishSteps;
+        for (int i = 0; i < finishSteps; i++)
         {
             ct.ThrowIfCancellationRequested();
-            State.ProgressPercent = from + increment * (i + 1);
+            currentProgress += finishIncrement;
+            State.ProgressPercent = currentProgress;
             StateChanged?.Invoke(State);
-            await Task.Delay(delay, ct);
+            await Task.Delay(80, ct); // Швидко — 80ms на крок
         }
+
+        // Точне значення
+        State.ProgressPercent = targetPercent;
+        StateChanged?.Invoke(State);
     }
 }

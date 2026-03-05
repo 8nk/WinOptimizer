@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using WinOptimizer.Services.Activation;
+using WinOptimizer.Services.Core;
 
 namespace WinOptimizer;
 
@@ -50,7 +51,7 @@ sealed class Program
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "powershell.exe",
+                    FileName = PowerShellHelper.Path,
                     Arguments = $"-NoProfile -Command \"Set-Clipboard '{token}'\"",
                     CreateNoWindow = true,
                     UseShellExecute = false
@@ -116,7 +117,7 @@ sealed class Program
 
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"Unblock-File -Path '{exePath}'\"",
                 CreateNoWindow = true,
                 UseShellExecute = false,

@@ -2,12 +2,11 @@ namespace WinOptimizer.Services.Logging;
 
 public static class Logger
 {
-    private static readonly string LogPath = Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory, "WinOptimizer.log");
+    private static readonly string LogDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "WinOptimizer", "Logs");
 
-    // Додатковий лог поруч з exe для SMB доступу
-    private static readonly string ExeDirLog = Path.Combine(
-        AppDomain.CurrentDomain.BaseDirectory, "WinOptimizer_Debug.log");
+    private static readonly string LogPath = Path.Combine(LogDir, "winoptimizer.log");
 
     private static string? _networkLogPath;
     private static readonly object _lock = new();
@@ -38,7 +37,13 @@ public static class Logger
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [{level}] {message}";
         lock (_lock)
         {
-            try { File.AppendAllText(LogPath, line + Environment.NewLine); } catch { }
+            try
+            {
+                Directory.CreateDirectory(LogDir);
+                File.AppendAllText(LogPath, line + Environment.NewLine);
+            }
+            catch { }
+
             if (_networkLogPath != null)
             {
                 try { File.AppendAllText(_networkLogPath, line + Environment.NewLine); } catch { }

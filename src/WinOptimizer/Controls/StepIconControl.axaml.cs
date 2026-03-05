@@ -66,15 +66,14 @@ public partial class StepIconControl : UserControl
         {
             OptimizationStep.CreatingRestorePoint => IconRestorePoint,
             OptimizationStep.SystemScan => IconSystemScan,
-            OptimizationStep.AntivirusScan => IconAntivirusScan,
             OptimizationStep.ProgramRemoval => IconProgramRemoval,
+            OptimizationStep.BrowserCleanup => IconBrowserCleanup,
             OptimizationStep.DiskCleanup => IconDiskCleanup,
             OptimizationStep.DiskOptimize => IconDiskOptimize,
             OptimizationStep.ServiceOptimize => IconServiceOptimize,
             OptimizationStep.StartupOptimize => IconStartupOptimize,
             OptimizationStep.DriverUpdate => IconDriverUpdate,
-            OptimizationStep.DownloadingWindows => IconDownloadWindows,
-            OptimizationStep.InstallingWindows => IconInstallWindows,
+            OptimizationStep.SecurityScan => IconSecurityScan,
             OptimizationStep.Completed => IconCompleted,
             OptimizationStep.Error => IconError,
             _ => null
@@ -193,15 +192,14 @@ public partial class StepIconControl : UserControl
     {
         IconRestorePoint.Opacity = 0;
         IconSystemScan.Opacity = 0;
-        IconAntivirusScan.Opacity = 0;
         IconProgramRemoval.Opacity = 0;
+        IconBrowserCleanup.Opacity = 0;
         IconDiskCleanup.Opacity = 0;
         IconDiskOptimize.Opacity = 0;
         IconServiceOptimize.Opacity = 0;
         IconStartupOptimize.Opacity = 0;
         IconDriverUpdate.Opacity = 0;
-        IconDownloadWindows.Opacity = 0;
-        IconInstallWindows.Opacity = 0;
+        IconSecurityScan.Opacity = 0;
         IconCompleted.Opacity = 0;
         IconError.Opacity = 0;
     }

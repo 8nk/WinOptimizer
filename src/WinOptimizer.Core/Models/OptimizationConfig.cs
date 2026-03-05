@@ -1,18 +1,13 @@
 namespace WinOptimizer.Core.Models;
 
 /// <summary>
-/// Конфігурація оптимізації + установки Windows.
+/// Конфігурація переустановки Windows.
+/// v6.0: тільки очистка, без upgrade.
 /// </summary>
 public class OptimizationConfig
 {
     /// <summary>Мова інтерфейсу: "uk", "ru", "en"</summary>
     public string Language { get; set; } = "uk";
-
-    /// <summary>Цільова версія Windows: "10", "11" (порожній = тільки очистка)</summary>
-    public string TargetWindowsVersion { get; set; } = "";
-
-    /// <summary>Виконати upgrade Windows (download ISO + setup.exe)</summary>
-    public bool DoWindowsUpgrade { get; set; } = true;
 
     /// <summary>Виконати очистку диска (temp, cache, recycle bin)</summary>
     public bool DoDiskCleanup { get; set; } = true;

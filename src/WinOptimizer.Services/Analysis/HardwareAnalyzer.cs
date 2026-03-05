@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Analysis;
@@ -218,7 +219,7 @@ public static class HardwareAnalyzer
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "powershell.exe",
+            FileName = PowerShellHelper.Path,
             Arguments = $"-NoProfile -NoLogo -Command \"[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; {command}\"",
             UseShellExecute = false,
             RedirectStandardOutput = true,

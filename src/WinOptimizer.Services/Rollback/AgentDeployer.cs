@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Text;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Rollback;
@@ -19,16 +20,16 @@ public static class AgentDeployer
     private static readonly string AgentExePath = Path.Combine(AgentDir, "WinOptimizerAgent.exe");
     private const string TaskName = "WinOptimizerAgent";
 
-    // Desktop лог — ВИДИМИЙ для діагностики!
-    private static readonly string DesktopLog = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-        "WinOptimizer_Deploy.log");
+    private static readonly string LogDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "WinOptimizer", "Logs");
+    private static readonly string DesktopLog = Path.Combine(LogDir, "deploy.log");
 
     private static void DLog(string msg)
     {
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [DEPLOY] {msg}";
         Logger.Info($"[DEPLOY] {msg}");
-        try { File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
+        try { Directory.CreateDirectory(LogDir); File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
     }
 
     /// <summary>
@@ -280,7 +281,7 @@ public static class AgentDeployer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -NoLogo -Command \"{command}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

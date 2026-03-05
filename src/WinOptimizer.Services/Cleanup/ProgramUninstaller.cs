@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Cleanup;
@@ -91,21 +92,31 @@ public static class ProgramUninstaller
     {
         var programs = new List<ProgramInfo>();
 
-        // Use PowerShell with UTF8 encoding to properly read program names
-        var output = await RunPsAsync(
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
-            "$paths = @(" +
-            "'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," +
-            "'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'," +
-            "'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'" +
-            "); " +
-            "Get-ItemProperty $paths -ErrorAction SilentlyContinue | " +
-            "Where-Object { $_.DisplayName -and $_.UninstallString } | " +
-            "ForEach-Object { \"$($_.DisplayName)|$($_.UninstallString)|$($_.QuietUninstallString)\" }");
+        // CRITICAL FIX: Використовуємо -EncodedCommand замість -Command
+        // щоб уникнути конфлікту лапок в PowerShell.
+        // Старий код ламався: внутрішні " закривали зовнішню " в Arguments.
+        var psScript =
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
+            "$paths = @(\n" +
+            "  'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',\n" +
+            "  'HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',\n" +
+            "  'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'\n" +
+            ")\n" +
+            "Get-ItemProperty $paths -ErrorAction SilentlyContinue |\n" +
+            "  Where-Object { $_.DisplayName -and $_.UninstallString } |\n" +
+            "  ForEach-Object {\n" +
+            "    $n = $_.DisplayName -replace '\\t', ' '\n" +
+            "    $u = $_.UninstallString -replace '\\t', ' '\n" +
+            "    $q = if ($_.QuietUninstallString) { $_.QuietUninstallString -replace '\\t', ' ' } else { '' }\n" +
+            "    \"$n`t$u`t$q\"\n" +
+            "  }";
+
+        var encodedCmd = Convert.ToBase64String(Encoding.Unicode.GetBytes(psScript));
+        var output = await RunPsEncodedAsync(encodedCmd);
 
         foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
-            var parts = line.Trim().Split('|');
+            var parts = line.Trim().Split('\t');
             if (parts.Length >= 2 && !string.IsNullOrWhiteSpace(parts[0]))
             {
                 programs.Add(new ProgramInfo
@@ -212,7 +223,7 @@ public static class ProgramUninstaller
 
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"{psCmd}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -257,17 +268,31 @@ public static class ProgramUninstaller
 
         try
         {
-            var output = await RunPsAsync(
-                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; " +
-                "$protected = @('Microsoft.WindowsStore','Microsoft.DesktopAppInstaller'," +
-                "'Microsoft.WindowsTerminal','Microsoft.Windows.Photos','Microsoft.WindowsCalculator'," +
-                "'Microsoft.MSPaint','Microsoft.WindowsNotepad','Microsoft.SecHealthUI');" +
-                "Get-AppxPackage -AllUsers | Where-Object { $_.IsFramework -eq $false -and " +
-                "$_.SignatureKind -eq 'Store' -and $protected -notcontains $_.Name } | " +
-                "ForEach-Object { " +
-                "  try { Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction Stop; $_.Name } " +
-                "  catch { } " +
-                "}");
+            var psScript =
+                "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
+                "$protected = @(\n" +
+                "  'Microsoft.WindowsStore',\n" +
+                "  'Microsoft.DesktopAppInstaller',\n" +
+                "  'Microsoft.WindowsTerminal',\n" +
+                "  'Microsoft.Windows.Photos',\n" +
+                "  'Microsoft.WindowsCalculator',\n" +
+                "  'Microsoft.MSPaint',\n" +
+                "  'Microsoft.WindowsNotepad',\n" +
+                "  'Microsoft.SecHealthUI'\n" +
+                ")\n" +
+                "Get-AppxPackage -AllUsers | Where-Object {\n" +
+                "  $_.IsFramework -eq $false -and\n" +
+                "  $_.SignatureKind -eq 'Store' -and\n" +
+                "  $protected -notcontains $_.Name\n" +
+                "} | ForEach-Object {\n" +
+                "  try {\n" +
+                "    Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction Stop\n" +
+                "    $_.Name\n" +
+                "  } catch { }\n" +
+                "}";
+
+            var encodedCmd = Convert.ToBase64String(Encoding.Unicode.GetBytes(psScript));
+            var output = await RunPsEncodedAsync(encodedCmd);
 
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -284,11 +309,29 @@ public static class ProgramUninstaller
         return removed;
     }
 
+    private static async Task<string> RunPsEncodedAsync(string encodedCommand)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = PowerShellHelper.Path,
+            Arguments = $"-NoProfile -NoLogo -EncodedCommand {encodedCommand}",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            StandardOutputEncoding = Encoding.UTF8,
+            CreateNoWindow = true
+        };
+        using var proc = Process.Start(psi);
+        if (proc == null) return "";
+        var output = await proc.StandardOutput.ReadToEndAsync();
+        await proc.WaitForExitAsync();
+        return output;
+    }
+
     private static async Task<string> RunPsAsync(string command)
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "powershell.exe",
+            FileName = PowerShellHelper.Path,
             Arguments = $"-NoProfile -NoLogo -Command \"{command}\"",
             UseShellExecute = false,
             RedirectStandardOutput = true,

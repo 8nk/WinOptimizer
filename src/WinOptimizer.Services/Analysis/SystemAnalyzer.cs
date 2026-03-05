@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using WinOptimizer.Core.Models;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Analysis;
@@ -125,7 +126,7 @@ public static class SystemAnalyzer
             // PowerShell: (New-Object -ComObject Shell.Application).NameSpace(0xa).Items() | Measure-Object -Property Size -Sum
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = "-NoProfile -Command \"try { $shell = New-Object -ComObject Shell.Application; $rb = $shell.NameSpace(0xa); if($rb) { ($rb.Items() | Measure-Object -Property Size -Sum).Sum } else { 0 } } catch { 0 }\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -149,7 +150,7 @@ public static class SystemAnalyzer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"@({string.Join(",", services.Select(s => $"'{s}'"))}) | ForEach-Object {{ $svc = Get-Service -Name $_ -ErrorAction SilentlyContinue; if($svc -and $svc.StartType -ne 'Disabled') {{ $_.ToString() }} }} | Measure-Object | Select-Object -ExpandProperty Count\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -170,7 +171,7 @@ public static class SystemAnalyzer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = "-NoProfile -Command \"$count = 0; $paths = @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run', 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'); foreach($p in $paths) { if(Test-Path $p) { $count += (Get-ItemProperty $p -ErrorAction SilentlyContinue).PSObject.Properties.Where({$_.Name -notlike 'PS*'}).Count } }; $count\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -191,7 +192,7 @@ public static class SystemAnalyzer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = "-NoProfile -Command \"(Get-PhysicalDisk | Where-Object DeviceID -eq 0).MediaType\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

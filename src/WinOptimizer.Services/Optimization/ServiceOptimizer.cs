@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using WinOptimizer.Core.Models;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Optimization;
@@ -57,7 +58,7 @@ public static class ServiceOptimizer
             // Get current start type
             var getPsi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"$svc = Get-Service -Name '{serviceName}' -ErrorAction SilentlyContinue; if($svc -and $svc.StartType -ne 'Disabled') {{ $svc.StartType.ToString() }} else {{ 'SKIP' }}\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -74,7 +75,7 @@ public static class ServiceOptimizer
             // Stop and disable
             var setPsi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"Stop-Service -Name '{serviceName}' -Force -ErrorAction SilentlyContinue; Set-Service -Name '{serviceName}' -StartupType Disabled\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -87,7 +88,7 @@ public static class ServiceOptimizer
             // Get display name
             var namePsi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"(Get-Service -Name '{serviceName}' -ErrorAction SilentlyContinue).DisplayName\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
@@ -114,7 +115,7 @@ public static class ServiceOptimizer
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"Set-Service -Name '{svc.ServiceName}' -StartupType {svc.OriginalStartType}; Start-Service -Name '{svc.ServiceName}' -ErrorAction SilentlyContinue\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

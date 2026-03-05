@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Rollback;
@@ -8,15 +9,15 @@ namespace WinOptimizer.Services.Rollback;
 /// </summary>
 public static class SystemRestoreService
 {
-    // Desktop лог для діагностики
-    private static readonly string DesktopLog = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-        "WinOptimizer_Deploy.log");
+    private static readonly string LogDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "WinOptimizer", "Logs");
+    private static readonly string DesktopLog = Path.Combine(LogDir, "restore.log");
     private static void DLog(string msg)
     {
         var line = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [RESTORE] {msg}";
         Logger.Info($"[RESTORE] {msg}");
-        try { File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
+        try { Directory.CreateDirectory(LogDir); File.AppendAllText(DesktopLog, line + Environment.NewLine); } catch { }
     }
 
     /// <summary>
@@ -153,7 +154,7 @@ public static class SystemRestoreService
         // Fallback if Sysnative powershell doesn't exist
         if (!File.Exists(psi.FileName))
         {
-            psi.FileName = "powershell.exe";
+            psi.FileName = PowerShellHelper.Path;
         }
 
         using var proc = Process.Start(psi);

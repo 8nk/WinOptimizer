@@ -6,6 +6,10 @@ using Avalonia.Threading;
 
 namespace WinOptimizer.Controls;
 
+/// <summary>
+/// Premium animated gradient background with deep color palettes.
+/// Slow, smooth transitions — no visible shimmer or banding.
+/// </summary>
 public partial class AnimatedGradientBackground : UserControl
 {
     public static readonly StyledProperty<string> PaletteProperty =
@@ -21,40 +25,54 @@ public partial class AnimatedGradientBackground : UserControl
     private double _phase;
     private double _colorPhase;
 
+    // === DEEP, PREMIUM palettes (dark backgrounds — no pastel/light colors) ===
+
+    // Deep ocean — dark teal/cyan
     private static readonly Color[] CyanColors =
     {
-        Color.Parse("#E0F7FA"), Color.Parse("#B2EBF2"), Color.Parse("#80DEEA"),
-        Color.Parse("#4DD0E1"), Color.Parse("#26C6DA"), Color.Parse("#00BCD4"), Color.Parse("#00ACC1")
+        Color.Parse("#0A1628"), Color.Parse("#0D2137"), Color.Parse("#0F2B45"),
+        Color.Parse("#0E3651"), Color.Parse("#0B4157"), Color.Parse("#094D5E"),
+        Color.Parse("#075A68")
     };
 
+    // Midnight blue — deep navy
     private static readonly Color[] BlueColors =
     {
-        Color.Parse("#E3F2FD"), Color.Parse("#BBDEFB"), Color.Parse("#90CAF9"),
-        Color.Parse("#64B5F6"), Color.Parse("#42A5F5"), Color.Parse("#2196F3"), Color.Parse("#1E88E5")
+        Color.Parse("#0A0E1A"), Color.Parse("#0D1529"), Color.Parse("#101D38"),
+        Color.Parse("#132647"), Color.Parse("#152F55"), Color.Parse("#173863"),
+        Color.Parse("#194170")
     };
 
+    // Dark forest — deep green
     private static readonly Color[] GreenColors =
     {
-        Color.Parse("#E8F5E9"), Color.Parse("#C8E6C9"), Color.Parse("#A5D6A7"),
-        Color.Parse("#81C784"), Color.Parse("#66BB6A"), Color.Parse("#4CAF50"), Color.Parse("#43A047")
+        Color.Parse("#0A1A12"), Color.Parse("#0D2218"), Color.Parse("#102A1E"),
+        Color.Parse("#133224"), Color.Parse("#163A2A"), Color.Parse("#194330"),
+        Color.Parse("#1C4C36")
     };
 
+    // Abyss — very dark teal-black
     private static readonly Color[] DeepColors =
     {
-        Color.Parse("#004D40"), Color.Parse("#00695C"), Color.Parse("#00897B"),
-        Color.Parse("#009688"), Color.Parse("#26A69A"), Color.Parse("#4DB6AC"), Color.Parse("#80CBC4")
+        Color.Parse("#060D10"), Color.Parse("#081418"), Color.Parse("#0A1B20"),
+        Color.Parse("#0C2228"), Color.Parse("#0E2930"), Color.Parse("#103038"),
+        Color.Parse("#123740")
     };
 
+    // Northern lights — dark blue-green-purple
     private static readonly Color[] AuroraColors =
     {
-        Color.Parse("#1A237E"), Color.Parse("#0D47A1"), Color.Parse("#006064"),
-        Color.Parse("#004D40"), Color.Parse("#00BCD4"), Color.Parse("#26C6DA"), Color.Parse("#4DD0E1")
+        Color.Parse("#0A0A1E"), Color.Parse("#0D1230"), Color.Parse("#0A1A3A"),
+        Color.Parse("#0B2238"), Color.Parse("#0E2A38"), Color.Parse("#0D3240"),
+        Color.Parse("#0B3A3E")
     };
 
+    // Dark amethyst — deep purple-indigo
     private static readonly Color[] PurpleColors =
     {
-        Color.Parse("#E8EAF6"), Color.Parse("#C5CAE9"), Color.Parse("#9FA8DA"),
-        Color.Parse("#7986CB"), Color.Parse("#5C6BC0"), Color.Parse("#3F51B5"), Color.Parse("#3949AB")
+        Color.Parse("#0E0A1E"), Color.Parse("#140E2A"), Color.Parse("#1A1236"),
+        Color.Parse("#201642"), Color.Parse("#261A4E"), Color.Parse("#2C1E5A"),
+        Color.Parse("#322266")
     };
 
     private static readonly Color[][] AllPalettes =
@@ -68,7 +86,7 @@ public partial class AnimatedGradientBackground : UserControl
 
         _timer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(40)
+            Interval = TimeSpan.FromMilliseconds(50) // Slower tick = smoother
         };
         _timer.Tick += OnTimerTick;
     }
@@ -88,10 +106,10 @@ public partial class AnimatedGradientBackground : UserControl
 
     private void OnTimerTick(object? sender, EventArgs e)
     {
-        _phase += 0.004; // Slower rotation
+        _phase += 0.002; // Much slower rotation — no visible shimmer
         if (_phase >= 2 * Math.PI) _phase -= 2 * Math.PI;
 
-        _colorPhase += 0.0005; // Very slow palette transition
+        _colorPhase += 0.0003; // Very slow palette transition
         if (_colorPhase >= AllPalettes.Length) _colorPhase -= AllPalettes.Length;
 
         UpdateGradient();
@@ -121,13 +139,13 @@ public partial class AnimatedGradientBackground : UserControl
         var cos = Math.Cos(_phase);
         var sin = Math.Sin(_phase);
 
-        // Smooth gradient rotation
-        var startPoint = new RelativePoint(0.5 - cos * 0.4, 0.5 - sin * 0.4, RelativeUnit.Relative);
-        var endPoint = new RelativePoint(0.5 + cos * 0.4, 0.5 + sin * 0.4, RelativeUnit.Relative);
+        // Wide gradient sweep for smooth coverage
+        var startPoint = new RelativePoint(0.5 - cos * 0.5, 0.5 - sin * 0.5, RelativeUnit.Relative);
+        var endPoint = new RelativePoint(0.5 + cos * 0.5, 0.5 + sin * 0.5, RelativeUnit.Relative);
 
         var brush = new LinearGradientBrush { StartPoint = startPoint, EndPoint = endPoint };
 
-        // Fixed evenly-spaced stops, no offset jitter = no visible bands
+        // Even spacing — no jitter or banding
         for (int i = 0; i < colors.Length; i++)
         {
             double offset = (double)i / (colors.Length - 1);
@@ -143,7 +161,7 @@ public partial class AnimatedGradientBackground : UserControl
         var idx2 = (idx1 + 1) % AllPalettes.Length;
         var t = _colorPhase - Math.Floor(_colorPhase);
 
-        // Smooth easing (ease-in-out)
+        // Smooth easing (ease-in-out cubic)
         t = t * t * (3.0 - 2.0 * t);
 
         var p1 = AllPalettes[idx1];

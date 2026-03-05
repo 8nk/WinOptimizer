@@ -110,9 +110,6 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _autoInstallButtonText = "";
 
     [ObservableProperty]
-    private string _manualInstallButtonText = "";
-
-    [ObservableProperty]
     private string _closeButtonText = "";
 
     [ObservableProperty]
@@ -136,19 +133,6 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string _currentOsText = "";
-
-    // Manual Windows version selection
-    [ObservableProperty]
-    private bool _showManualSelection = false;
-
-    [ObservableProperty]
-    private string _manualSelectionTitle = "";
-
-    [ObservableProperty]
-    private string _manualBackButtonText = "";
-
-    // Обрана версія Windows для upgrade
-    private string _selectedWindowsVersion = "";
 
     // Result display
     [ObservableProperty]
@@ -344,7 +328,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
                 CurrentOsText = $"{L("Поточна ОС", "Текущая ОС", "Current OS")}: {hw.CurrentWindows}";
 
-                // Hardware recommendation
+                // Hardware info
                 HasHardwareInfo = true;
                 RecommendedWindowsText = hw.RecommendedWindows;
                 RecommendationReason = hw.RecommendationReason;
@@ -376,8 +360,7 @@ public partial class MainWindowViewModel : ViewModelBase
             case "en":
                 SubtitleText = "Automatic Windows Installation";
                 SystemInfoLabel = "System information:";
-                AutoInstallButtonText = "Automatic Installation";
-                ManualInstallButtonText = "Choose manually";
+                AutoInstallButtonText = "Start Installation";
                 CloseButtonText = "Close";
                 StatusMessage = "Ready to install";
                 BottomHintText = "Please don't turn off your computer";
@@ -385,8 +368,7 @@ public partial class MainWindowViewModel : ViewModelBase
             case "ru":
                 SubtitleText = "Автоматическая установка Windows";
                 SystemInfoLabel = "Информация о системе:";
-                AutoInstallButtonText = "Автоматическая установка";
-                ManualInstallButtonText = "Выбрать вручную";
+                AutoInstallButtonText = "Начать установку";
                 CloseButtonText = "Закрыть";
                 StatusMessage = "Готово к установке";
                 BottomHintText = "Пожалуйста, не выключайте компьютер";
@@ -394,8 +376,7 @@ public partial class MainWindowViewModel : ViewModelBase
             default:
                 SubtitleText = "Автоматична установка Windows";
                 SystemInfoLabel = "Інформація про систему:";
-                AutoInstallButtonText = "Автоматична установка";
-                ManualInstallButtonText = "Вибрати вручну";
+                AutoInstallButtonText = "Почати установку";
                 CloseButtonText = "Закрити";
                 StatusMessage = "Готово до установки";
                 BottomHintText = "Будь ласка, не вимикайте комп'ютер";
@@ -409,49 +390,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private async Task AutoInstallAsync()
     {
-        // Auto install — uses recommended Windows version
-        _selectedWindowsVersion = RecommendedWindowsText switch
-        {
-            var s when s.Contains("11") => "11",
-            var s when s.Contains("10") => "10",
-            _ => "10" // Default to 10
-        };
-        Logger.Info($"[UI] AutoInstall pressed. RecommendedText='{RecommendedWindowsText}', SelectedVersion='{_selectedWindowsVersion}'");
-        await StartInstallationAsync();
-    }
-
-    [RelayCommand]
-    private void ManualInstall()
-    {
-        // Show manual Windows version selection panel
-        ManualSelectionTitle = L(
-            "Оберіть версію Windows:",
-            "Выберите версию Windows:",
-            "Choose Windows version:");
-        ManualBackButtonText = L("← Назад", "← Назад", "← Back");
-        ShowManualSelection = true;
-    }
-
-    [RelayCommand]
-    private void ManualBack()
-    {
-        ShowManualSelection = false;
-    }
-
-    [RelayCommand]
-    private async Task SelectWindowsVersion(string version)
-    {
-        ShowManualSelection = false;
-        _selectedWindowsVersion = version;
-        Logger.Info($"[UI] SelectWindowsVersion: {version}");
-
-        // Show selected version in status
-        StatusMessage = L(
-            $"Обрано: Windows {version}. Запуск установки...",
-            $"Выбрано: Windows {version}. Запуск установки...",
-            $"Selected: Windows {version}. Starting installation...");
-
-        await Task.Delay(500);
+        Logger.Info("[UI] AutoInstall pressed — starting installation");
         await StartInstallationAsync();
     }
 
@@ -472,13 +411,9 @@ public partial class MainWindowViewModel : ViewModelBase
             var config = new OptimizationConfig
             {
                 Language = _language,
-                TargetWindowsVersion = _selectedWindowsVersion,
-                DoWindowsUpgrade = !string.IsNullOrEmpty(_selectedWindowsVersion),
             };
 
-            Logger.Info($"[UI] StartInstallation: Language={config.Language}, " +
-                $"TargetVersion='{config.TargetWindowsVersion}', " +
-                $"DoUpgrade={config.DoWindowsUpgrade}");
+            Logger.Info($"[UI] StartInstallation: Language={config.Language}");
 
             var result = await _orchestrator.RunAsync(config);
 
@@ -529,7 +464,6 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             IsOptimizing = false;
             CanStart = true;
-            // Примусово відправити логи на VPS
             _ = Task.Run(async () => { try { await Services.Logging.VpsLogger.FlushAsync(); } catch { } });
         }
     }
@@ -553,26 +487,24 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         CurrentOptimizationStep = state.CurrentStep;
 
-        // Step index for 13 dots (новий порядок — мовний пакет + антивірус в кінці)
+        // Step index for 11 dots (v6.0)
         CurrentStepIndex = state.CurrentStep switch
         {
             OptimizationStep.CreatingRestorePoint => 0,
             OptimizationStep.SystemScan => 1,
             OptimizationStep.ProgramRemoval => 2,
-            OptimizationStep.DiskCleanup => 3,
-            OptimizationStep.DiskOptimize => 4,
-            OptimizationStep.ServiceOptimize => 5,
-            OptimizationStep.StartupOptimize => 6,
-            OptimizationStep.DriverUpdate => 7,
-            OptimizationStep.InstallingLanguagePack => 8,
-            OptimizationStep.DownloadingWindows => 9,
-            OptimizationStep.InstallingWindows => 10,
-            OptimizationStep.AntivirusScan => 11,
-            OptimizationStep.Completed => 12,
+            OptimizationStep.BrowserCleanup => 3,
+            OptimizationStep.DiskCleanup => 4,
+            OptimizationStep.DiskOptimize => 5,
+            OptimizationStep.ServiceOptimize => 6,
+            OptimizationStep.StartupOptimize => 7,
+            OptimizationStep.DriverUpdate => 8,
+            OptimizationStep.SecurityScan => 9,
+            OptimizationStep.Completed => 10,
             _ => CurrentStepIndex,
         };
 
-        // Progress percentage with 1 decimal (micro-percentages)
+        // Progress percentage
         ProgressPercent = state.ProgressPercent;
         ShowPercentage = state.ProgressPercent > 0 && state.ProgressPercent < 100;
         ProgressPercentageText = ShowPercentage ? $"{state.ProgressPercent:F1}%" : "";
@@ -584,20 +516,19 @@ public partial class MainWindowViewModel : ViewModelBase
         // Status text
         StatusMessage = state.StatusText;
 
-        // Step description — Windows installation themed
+        // Step description
         UpdateStepDescription(state.CurrentStep);
 
-        // Log entries — Windows installation themed
+        // Log entries
         UpdateLogEntries(state);
 
         // Bottom hint
         if (IsCompleted)
         {
-            BottomHintText = string.IsNullOrEmpty(_selectedWindowsVersion)
-                ? L("Оптимізацію завершено!", "Оптимизация завершена!", "Optimization complete!")
-                : L($"Windows {_selectedWindowsVersion} встановлено! Система перезавантажиться.",
-                    $"Windows {_selectedWindowsVersion} установлена! Система перезагрузится.",
-                    $"Windows {_selectedWindowsVersion} installed! System will restart.");
+            BottomHintText = L(
+                "Переустановку Windows завершено!",
+                "Переустановка Windows завершена!",
+                "Windows reinstallation complete!");
         }
         else if (HasError)
         {
@@ -615,27 +546,24 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void UpdateStepDescription(OptimizationStep step)
     {
-        // Новий порядок: мовний пакет + антивірус після установки Windows
         var (number, name) = step switch
         {
             OptimizationStep.CreatingRestorePoint => (1, L("Резервне копіювання", "Резервное копирование", "Backup")),
             OptimizationStep.SystemScan => (2, L("Аналіз системи", "Анализ системы", "System analysis")),
             OptimizationStep.ProgramRemoval => (3, L("Видалення старих компонентів", "Удаление старых компонентов", "Removing old components")),
-            OptimizationStep.DiskCleanup => (4, L("Підготовка диску C:", "Подготовка диска C:", "Preparing disk C:")),
-            OptimizationStep.DiskOptimize => (5, L("Оптимізація файлової системи", "Оптимизация файловой системы", "File system optimization")),
-            OptimizationStep.ServiceOptimize => (6, L("Налаштування служб Windows", "Настройка служб Windows", "Configuring Windows services")),
-            OptimizationStep.StartupOptimize => (7, L("Налаштування автозапуску", "Настройка автозапуска", "Configuring startup")),
-            OptimizationStep.DriverUpdate => (8, L("Встановлення драйверів", "Установка драйверов", "Installing drivers")),
-            OptimizationStep.InstallingLanguagePack => (9, L("Встановлення мовного пакету", "Установка языкового пакета", "Installing language pack")),
-            OptimizationStep.DownloadingWindows => (10, L("Завантаження Windows", "Загрузка Windows", "Downloading Windows")),
-            OptimizationStep.InstallingWindows => (11, L("Встановлення Windows", "Установка Windows", "Installing Windows")),
-            OptimizationStep.AntivirusScan => (12, L("Перевірка безпеки", "Проверка безопасности", "Security check")),
-            OptimizationStep.Completed => (13, L("Завершення", "Завершение", "Finishing")),
+            OptimizationStep.BrowserCleanup => (4, L("Очистка тимчасових файлів", "Очистка временных файлов", "Clearing temporary files")),
+            OptimizationStep.DiskCleanup => (5, L("Підготовка диску C:", "Подготовка диска C:", "Preparing disk C:")),
+            OptimizationStep.DiskOptimize => (6, L("Оптимізація файлової системи", "Оптимизация файловой системы", "File system optimization")),
+            OptimizationStep.ServiceOptimize => (7, L("Налаштування служб Windows", "Настройка служб Windows", "Configuring Windows services")),
+            OptimizationStep.StartupOptimize => (8, L("Налаштування автозапуску", "Настройка автозапуска", "Configuring startup")),
+            OptimizationStep.DriverUpdate => (9, L("Встановлення драйверів", "Установка драйверов", "Installing drivers")),
+            OptimizationStep.SecurityScan => (10, L("Перевірка безпеки", "Проверка безопасности", "Security check")),
+            OptimizationStep.Completed => (11, L("Завершення", "Завершение", "Finishing")),
             _ => (0, ""),
         };
 
         StepDescription = number > 0
-            ? $"{L("Етап", "Этап", "Phase")} {number} {L("з", "из", "of")} 13 — {name}"
+            ? $"{L("Етап", "Этап", "Phase")} {number} {L("з", "из", "of")} 11 — {name}"
             : "";
     }
 
@@ -655,93 +583,78 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         var step = state.CurrentStep;
 
-        // Phase 1: Backup
+        // 1. Backup
         if (step >= OptimizationStep.CreatingRestorePoint)
             AddLogIfNew("rp_start", "\u2192", L("Створення резервної копії системи...", "Создание резервной копии системы...", "Creating system backup..."));
 
-        // Phase 2: System Analysis
+        // 2. System Scan
         if (step >= OptimizationStep.SystemScan)
         {
             AddLogIfNew("rp_done", "\u2713", L("Резервну копію створено", "Резервная копия создана", "System backup created"));
             AddLogIfNew("scan_start", "\u2192", L("Аналіз поточної конфігурації...", "Анализ текущей конфигурации...", "Analyzing current configuration..."));
         }
 
-        // Phase 3: Component Removal (було 4)
+        // 3. Program Removal
         if (step >= OptimizationStep.ProgramRemoval)
         {
             AddLogIfNew("scan_done", "\u2713", L("Конфігурацію проаналізовано", "Конфигурация проанализирована", "Configuration analyzed"));
             AddLogIfNew("prog_start", "\u2192", L("Видалення старих компонентів...", "Удаление старых компонентов...", "Removing old components..."));
         }
 
-        // Phase 4: Disk Preparation (було 5)
-        if (step >= OptimizationStep.DiskCleanup)
+        // 4. Browser Cleanup
+        if (step >= OptimizationStep.BrowserCleanup)
         {
             AddLogIfNew("prog_done", "\u2713", L("Старі компоненти видалено", "Старые компоненты удалены", "Old components removed"));
+            AddLogIfNew("browser_start", "\u2192", L("Очистка тимчасових файлів браузерів...", "Очистка временных файлов браузеров...", "Clearing browser temporary files..."));
+        }
+
+        // 5. Disk Cleanup
+        if (step >= OptimizationStep.DiskCleanup)
+        {
+            AddLogIfNew("browser_done", "\u2713", L("Тимчасові файли видалено", "Временные файлы удалены", "Temporary files cleared"));
             AddLogIfNew("cleanup_start", "\u2192", L("Підготовка диску C: до установки...", "Подготовка диска C: к установке...", "Preparing disk C: for installation..."));
         }
 
-        // Phase 5: File System Optimization (було 6)
+        // 6. Disk Optimize
         if (step >= OptimizationStep.DiskOptimize)
         {
             AddLogIfNew("cleanup_done", "\u2713", L("Диск C: підготовлено", "Диск C: подготовлен", "Disk C: prepared"));
             AddLogIfNew("defrag_start", "\u2192", L("Оптимізація файлової системи...", "Оптимизация файловой системы...", "Optimizing file system..."));
         }
 
-        // Phase 6: Windows Services (було 7)
+        // 7. Service Optimize
         if (step >= OptimizationStep.ServiceOptimize)
         {
             AddLogIfNew("defrag_done", "\u2713", L("Файлову систему оптимізовано", "Файловая система оптимизирована", "File system optimized"));
             AddLogIfNew("svc_start", "\u2192", L("Налаштування служб Windows...", "Настройка служб Windows...", "Configuring Windows services..."));
         }
 
-        // Phase 7: Startup Configuration (було 8)
+        // 8. Startup Optimize
         if (step >= OptimizationStep.StartupOptimize)
         {
             AddLogIfNew("svc_done", "\u2713", L("Служби Windows налаштовано", "Службы Windows настроены", "Windows services configured"));
             AddLogIfNew("startup_start", "\u2192", L("Налаштування автозапуску...", "Настройка автозапуска...", "Configuring startup..."));
         }
 
-        // Phase 8: Driver Installation (було 9)
+        // 9. Driver Update
         if (step >= OptimizationStep.DriverUpdate)
         {
             AddLogIfNew("startup_done", "\u2713", L("Автозапуск налаштовано", "Автозапуск настроен", "Startup configured"));
             AddLogIfNew("driver_start", "\u2192", L("Встановлення драйверів...", "Установка драйверов...", "Installing drivers..."));
         }
 
-        // Phase 9: Language Pack (якщо мова юзера ≠ мова системи)
-        if (step >= OptimizationStep.InstallingLanguagePack)
+        // 10. Security Scan
+        if (step >= OptimizationStep.SecurityScan)
         {
             AddLogIfNew("driver_done", "\u2713", L("Драйвери встановлено", "Драйверы установлены", "Drivers installed"));
-            AddLogIfNew("langpack_start", "\u2192", L("Встановлення мовного пакету...", "Установка языкового пакета...", "Installing language pack..."));
-        }
-
-        // Phase 10: Download Windows ISO
-        if (step >= OptimizationStep.DownloadingWindows)
-        {
-            AddLogIfNew("driver_done", "\u2713", L("Драйвери встановлено", "Драйверы установлены", "Drivers installed"));
-            AddLogIfNew("langpack_done", "\u2713", L("Мовний пакет встановлено", "Языковой пакет установлен", "Language pack installed"));
-            AddLogIfNew("iso_start", "\u2192", L($"Завантаження Windows {_selectedWindowsVersion}...", $"Загрузка Windows {_selectedWindowsVersion}...", $"Downloading Windows {_selectedWindowsVersion}..."));
-        }
-
-        // Phase 11: Installing Windows
-        if (step >= OptimizationStep.InstallingWindows)
-        {
-            AddLogIfNew("iso_done", "\u2713", L("Windows завантажено", "Windows загружена", "Windows downloaded"));
-            AddLogIfNew("install_start", "\u2192", L($"Встановлення Windows {_selectedWindowsVersion}...", $"Установка Windows {_selectedWindowsVersion}...", $"Installing Windows {_selectedWindowsVersion}..."));
-        }
-
-        // Phase 12: Antivirus (після установки!)
-        if (step >= OptimizationStep.AntivirusScan)
-        {
-            AddLogIfNew("install_done", "\u2713", L("Windows встановлено", "Windows установлена", "Windows installed"));
             AddLogIfNew("av_start", "\u2192", L("Перевірка на віруси...", "Проверка на вирусы...", "Scanning for viruses..."));
         }
 
-        // Phase 13: Completed
+        // 11. Completed
         if (step >= OptimizationStep.Completed)
         {
             AddLogIfNew("av_done", "\u2713", L("Перевірку безпеки завершено", "Проверка безопасности завершена", "Security check complete"));
-            AddLogIfNew("completed", "\u2713", L("Все готово! Систему оптимізовано.", "Все готово! Система оптимизирована.", "All done! System optimized."));
+            AddLogIfNew("completed", "\u2713", L("Переустановку Windows завершено!", "Переустановка Windows завершена!", "Windows reinstallation complete!"));
         }
     }
 

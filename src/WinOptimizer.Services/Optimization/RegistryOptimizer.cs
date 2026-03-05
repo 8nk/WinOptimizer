@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Optimization;
@@ -48,7 +49,7 @@ public static class RegistryOptimizer
 
             var psi = new ProcessStartInfo
             {
-                FileName = "powershell.exe",
+                FileName = PowerShellHelper.Path,
                 Arguments = $"-NoProfile -Command \"if(!(Test-Path '{path}')) {{ New-Item -Path '{path}' -Force | Out-Null }}; Set-ItemProperty -Path '{path}' -Name '{name}' -Value {valueStr} {typeFlag} -Force\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,

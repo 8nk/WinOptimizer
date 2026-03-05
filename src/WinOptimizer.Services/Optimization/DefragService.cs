@@ -1,10 +1,12 @@
 using System.Diagnostics;
+using WinOptimizer.Services.Core;
 using WinOptimizer.Services.Logging;
 
 namespace WinOptimizer.Services.Optimization;
 
 /// <summary>
 /// Дефрагментація (HDD) або TRIM (SSD).
+/// HDD defrag може тривати 10-30 хв на повільних дисках — використовуємо async polling.
 /// </summary>
 public static class DefragService
 {
@@ -16,13 +18,15 @@ public static class DefragService
             {
                 onProgress?.Invoke("Виконання TRIM для SSD...");
                 Logger.Info("Running TRIM on SSD");
-                return await RunPowerShellAsync("Optimize-Volume -DriveLetter C -ReTrim -Verbose");
+                return await RunDefragAsync("Optimize-Volume -DriveLetter C -ReTrim -Verbose",
+                    TimeSpan.FromMinutes(3), onProgress);
             }
             else
             {
                 onProgress?.Invoke("Дефрагментація HDD...");
                 Logger.Info("Running Defrag on HDD");
-                return await RunPowerShellAsync("Optimize-Volume -DriveLetter C -Defrag -Verbose");
+                return await RunDefragAsync("Optimize-Volume -DriveLetter C -Defrag -Verbose",
+                    TimeSpan.FromMinutes(15), onProgress);
             }
         }
         catch (Exception ex)
@@ -32,32 +36,49 @@ public static class DefragService
         }
     }
 
-    private static async Task<bool> RunPowerShellAsync(string command)
+    private static async Task<bool> RunDefragAsync(string command, TimeSpan maxWait, Action<string>? onProgress)
     {
-        return await Task.Run(() =>
+        try
         {
-            try
+            var psi = new ProcessStartInfo
             {
-                var psi = new ProcessStartInfo
+                FileName = PowerShellHelper.Path,
+                Arguments = $"-NoProfile -Command \"{command}\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+
+            var startTime = DateTime.Now;
+
+            // Async wait with timeout — не блокує, не крашиться
+            while (!proc.HasExited)
+            {
+                var elapsed = DateTime.Now - startTime;
+                if (elapsed > maxWait)
                 {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -Command \"{command}\"",
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    CreateNoWindow = true
-                };
-                using var proc = Process.Start(psi);
-                if (proc == null) return false;
-                proc.WaitForExit(300000); // 5 min max
-                Logger.Info($"Defrag exit code: {proc.ExitCode}");
-                return proc.ExitCode == 0;
+                    Logger.Warn($"Defrag timeout after {elapsed.TotalMinutes:F0} min, killing...");
+                    try { proc.Kill(); } catch { }
+                    onProgress?.Invoke("Оптимізація диску: таймаут, пропускаємо...");
+                    return false;
+                }
+
+                onProgress?.Invoke($"Оптимізація диску... ({elapsed.Minutes}:{elapsed.Seconds:D2})");
+                await Task.Delay(3000);
             }
-            catch (Exception ex)
-            {
-                Logger.Error("PowerShell defrag failed", ex);
-                return false;
-            }
-        });
+
+            var exitCode = proc.ExitCode;
+            Logger.Info($"Defrag exit code: {exitCode}, time: {(DateTime.Now - startTime).TotalSeconds:F0}s");
+            return exitCode == 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Defrag process error", ex);
+            return false;
+        }
     }
 }
