@@ -6,8 +6,9 @@ namespace WinOptimizer.Services.Analysis;
 
 /// <summary>
 /// Запуск Windows Defender Quick Scan та видалення загроз.
-/// CRITICAL FIX: Start-MpScan запускається АСИНХРОННО (fire-and-forget),
-/// інакше PowerShell блокує на 20-30 хв на повільних ПК!
+/// Сумісність: Windows 7 / 8 / 8.1 / 10 / 11
+/// - Win10+: Start-MpScan cmdlet (PowerShell, fire-and-forget)
+/// - Win7/8: MpCmdRun.exe -Scan -ScanType 1 (command line tool, працює на всіх версіях)
 /// </summary>
 public static class AntivirusScanner
 {
@@ -19,14 +20,24 @@ public static class AntivirusScanner
 
         try
         {
+            var isWin10Plus = IsWindows10OrLater();
+
             // 1. Update definitions (з таймаутом 2 хвилини)
             onProgress?.Invoke("Оновлення антивірусних баз...");
             Logger.Info("[AV] Updating Defender signatures...");
             try
             {
-                await RunPsWithTimeoutAsync(
-                    "Update-MpSignature -ErrorAction SilentlyContinue",
-                    TimeSpan.FromMinutes(2));
+                if (isWin10Plus)
+                {
+                    await RunPsWithTimeoutAsync(
+                        "Update-MpSignature -ErrorAction SilentlyContinue",
+                        TimeSpan.FromMinutes(2));
+                }
+                else
+                {
+                    // Win7/8: MpCmdRun.exe -SignatureUpdate
+                    await RunMpCmdRunAsync("-SignatureUpdate", TimeSpan.FromMinutes(2));
+                }
                 Logger.Info("[AV] Defender signatures updated");
             }
             catch (Exception ex)
@@ -35,12 +46,9 @@ public static class AntivirusScanner
             }
 
             // 2. Quick Scan — FIRE AND FORGET!
-            // Start-MpScan в PowerShell БЛОКУЄ до завершення скану.
-            // На повільних ПК це 20-30 хвилин → зависає вся програма.
-            // Тому запускаємо процес і НЕ чекаємо завершення.
             onProgress?.Invoke("Швидке сканування системи...");
             Logger.Info("[AV] Starting Defender Quick Scan (fire-and-forget)...");
-            StartScanFireAndForget();
+            StartScanFireAndForget(isWin10Plus);
             Logger.Info("[AV] Quick Scan command sent (async, not blocking)");
 
             // 3. Невелика пауза щоб скан встиг стартувати
@@ -57,14 +65,23 @@ public static class AntivirusScanner
 
                 try
                 {
-                    var statusOutput = await RunPsWithTimeoutReturnAsync(
-                        "$s = Get-MpComputerStatus -ErrorAction SilentlyContinue; " +
-                        "if($s) { \"$($s.QuickScanInProgress)|$($s.FullScanInProgress)\" } else { 'False|False' }",
-                        TimeSpan.FromSeconds(15));
+                    bool scanning;
+                    if (isWin10Plus)
+                    {
+                        var statusOutput = await RunPsWithTimeoutReturnAsync(
+                            "$s = Get-MpComputerStatus -ErrorAction SilentlyContinue; " +
+                            "if($s) { \"$($s.QuickScanInProgress)|$($s.FullScanInProgress)\" } else { 'False|False' }",
+                            TimeSpan.FromSeconds(15));
 
-                    var parts = statusOutput.Trim().Split('|');
-                    bool scanning = (parts.Length > 0 && parts[0].Equals("True", StringComparison.OrdinalIgnoreCase))
-                                 || (parts.Length > 1 && parts[1].Equals("True", StringComparison.OrdinalIgnoreCase));
+                        var parts = statusOutput.Trim().Split('|');
+                        scanning = (parts.Length > 0 && parts[0].Equals("True", StringComparison.OrdinalIgnoreCase))
+                                     || (parts.Length > 1 && parts[1].Equals("True", StringComparison.OrdinalIgnoreCase));
+                    }
+                    else
+                    {
+                        // Win7/8: перевіряємо чи MpCmdRun.exe ще працює
+                        scanning = Process.GetProcessesByName("MpCmdRun").Length > 0;
+                    }
 
                     if (!scanning)
                     {
@@ -93,13 +110,22 @@ public static class AntivirusScanner
             // 5. Check for threats (з таймаутом)
             try
             {
-                var threatOutput = await RunPsWithTimeoutReturnAsync(
-                    "$threats = Get-MpThreatDetection -ErrorAction SilentlyContinue; " +
-                    "if($threats) { $threats.Count } else { 0 }",
-                    TimeSpan.FromSeconds(20));
+                if (isWin10Plus)
+                {
+                    var threatOutput = await RunPsWithTimeoutReturnAsync(
+                        "$threats = Get-MpThreatDetection -ErrorAction SilentlyContinue; " +
+                        "if($threats) { $threats.Count } else { 0 }",
+                        TimeSpan.FromSeconds(20));
 
-                if (int.TryParse(threatOutput.Trim(), out var count))
-                    threatsFound = count;
+                    if (int.TryParse(threatOutput.Trim(), out var count))
+                        threatsFound = count;
+                }
+                else
+                {
+                    // Win7/8: MpCmdRun не має зручного способу отримати кількість загроз,
+                    // тому просто повідомляємо що скан завершено
+                    Logger.Info("[AV] Win7/8: threat count not available via MpCmdRun");
+                }
             }
             catch (Exception ex)
             {
@@ -112,9 +138,17 @@ public static class AntivirusScanner
                 onProgress?.Invoke($"Знайдено загроз: {threatsFound}. Видалення...");
                 try
                 {
-                    await RunPsWithTimeoutAsync(
-                        "Remove-MpThreat -ErrorAction SilentlyContinue",
-                        TimeSpan.FromMinutes(2));
+                    if (isWin10Plus)
+                    {
+                        await RunPsWithTimeoutAsync(
+                            "Remove-MpThreat -ErrorAction SilentlyContinue",
+                            TimeSpan.FromMinutes(2));
+                    }
+                    else
+                    {
+                        // Win7/8: MpCmdRun -Scan -ScanType 1 вже видаляє загрози
+                        await RunMpCmdRunAsync("-RemoveDefinitions -DynamicSignatures", TimeSpan.FromMinutes(1));
+                    }
                 }
                 catch { }
                 Logger.Info($"[AV] Removed {threatsFound} threats");
@@ -134,23 +168,70 @@ public static class AntivirusScanner
         return threatsFound;
     }
 
+    private static bool IsWindows10OrLater()
+    {
+        try { return Environment.OSVersion.Version.Major >= 10; }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Знайти MpCmdRun.exe (Windows Defender CLI — працює на Win7/8/10/11)
+    /// </summary>
+    private static string GetMpCmdRunPath()
+    {
+        // Standard paths for MpCmdRun.exe
+        var paths = new[]
+        {
+            @"C:\Program Files\Windows Defender\MpCmdRun.exe",
+            @"C:\Program Files (x86)\Windows Defender\MpCmdRun.exe",
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Windows Defender", "MpCmdRun.exe"),
+        };
+
+        foreach (var p in paths)
+        {
+            if (File.Exists(p)) return p;
+        }
+
+        return "MpCmdRun.exe"; // fallback
+    }
+
     /// <summary>
     /// Запускає Quick Scan БЕЗ очікування завершення.
     /// Process запускається і ми його не чекаємо — він працює у фоні.
     /// </summary>
-    private static void StartScanFireAndForget()
+    private static void StartScanFireAndForget(bool isWin10Plus)
     {
         try
         {
-            var psi = new ProcessStartInfo
+            ProcessStartInfo psi;
+
+            if (isWin10Plus)
             {
-                FileName = PowerShellHelper.Path,
-                Arguments = "-NoProfile -NoLogo -Command \"Start-MpScan -ScanType QuickScan -ErrorAction SilentlyContinue\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
-                CreateNoWindow = true
-            };
+                psi = new ProcessStartInfo
+                {
+                    FileName = PowerShellHelper.Path,
+                    Arguments = "-NoProfile -NoLogo -Command \"Start-MpScan -ScanType QuickScan -ErrorAction SilentlyContinue\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false,
+                    CreateNoWindow = true
+                };
+            }
+            else
+            {
+                // Win7/8: MpCmdRun.exe -Scan -ScanType 1 (Quick Scan)
+                psi = new ProcessStartInfo
+                {
+                    FileName = GetMpCmdRunPath(),
+                    Arguments = "-Scan -ScanType 1",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = false,
+                    RedirectStandardError = false,
+                    CreateNoWindow = true
+                };
+            }
+
             var proc = Process.Start(psi);
             Logger.Info($"[AV] Scan process started, PID: {proc?.Id}");
             // НЕ чекаємо завершення! Процес працює у фоні.
@@ -158,6 +239,33 @@ public static class AntivirusScanner
         catch (Exception ex)
         {
             Logger.Error($"[AV] Failed to start scan process: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Запустити MpCmdRun.exe з таймаутом (для Win7/8)
+    /// </summary>
+    private static async Task RunMpCmdRunAsync(string arguments, TimeSpan timeout)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = GetMpCmdRunPath(),
+            Arguments = arguments,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            CreateNoWindow = true
+        };
+        using var proc = Process.Start(psi);
+        if (proc == null) return;
+
+        using var cts = new CancellationTokenSource(timeout);
+        try
+        {
+            await proc.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { proc.Kill(true); } catch { }
         }
     }
 

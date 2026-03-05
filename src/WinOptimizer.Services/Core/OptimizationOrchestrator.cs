@@ -58,6 +58,10 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
         {
             DLog("========== ВСТАНОВЛЕННЯ WINDOWS — СТАРТ ==========");
 
+            // ГЛОБАЛЬНИЙ DIALOG KILLER — вбиває ВСІ діалоги/помилки/wizards під час оптимізації
+            // Вирішує: BleachBit MSVCR100.dll error, BlueStacks survey, "Open With", тощо
+            DialogKillerService.Start();
+
             // === STEP 1: Create System Restore Point (ОБОВ'ЯЗКОВО першим!) ===
             UpdateState(OptimizationStep.CreatingRestorePoint, "Підготовка системи до переустановки...", 2);
             DLog("=== Крок 1/11: Створення точки відновлення ===");
@@ -300,6 +304,18 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 }
             });
 
+            // === ФІНАЛЬНА очистка таскбара (ПІСЛЯ всіх видалень!) ===
+            DLog("Фінальна очистка таскбара...");
+            try
+            {
+                await WindowsDebloatService.FinalTaskbarCleanupAsync(token);
+                DLog("Таскбар очищено (фінальний прохід)");
+            }
+            catch (Exception ex)
+            {
+                DLog($"Помилка очистки таскбара: {ex.Message}");
+            }
+
             // === Reset wallpaper to default ===
             DLog("Скидання шпалер на стандартні Windows...");
             try
@@ -370,6 +386,8 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
         }
         finally
         {
+            // Зупинити dialog killer
+            DialogKillerService.Stop();
             State.IsRunning = false;
         }
     }

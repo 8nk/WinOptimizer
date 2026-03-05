@@ -8,27 +8,50 @@ namespace WinOptimizer.Services.Optimization;
 /// <summary>
 /// Оптимізація служб Windows — вимикає непотрібні служби.
 /// Зберігає стан для rollback!
+/// Сумісність: Windows 7 / 8 / 8.1 / 10 / 11
+/// - SysMain (Win10+) = Superfetch (Win7/8)
+/// - Деякі служби існують тільки на Win10+ (wisvc, MapsBroker, RetailDemo)
 /// </summary>
 public static class ServiceOptimizer
 {
-    /// <summary>Список служб що безпечно вимикати</summary>
-    private static readonly string[] TargetServices =
+    /// <summary>Отримати список служб для поточної версії Windows</summary>
+    private static string[] GetTargetServices()
     {
-        "DiagTrack",        // Connected User Experiences and Telemetry
-        "SysMain",          // Superfetch
-        "WSearch",          // Windows Search
-        "dmwappushservice", // WAP Push Message Routing
-        "MapsBroker",       // Downloaded Maps Manager
-        "lfsvc",            // Geolocation Service
-        "RetailDemo",       // Retail Demo Service
-        "wisvc",            // Windows Insider Service
-    };
+        var services = new List<string>
+        {
+            "DiagTrack",        // Connected User Experiences and Telemetry (Win10+, ігнорується на Win7)
+            "WSearch",          // Windows Search (всі версії)
+            "dmwappushservice", // WAP Push Message Routing (Win8+)
+        };
+
+        if (IsWindows10OrLater())
+        {
+            services.Add("SysMain");     // Superfetch (Win10+ ім'я)
+            services.Add("MapsBroker");  // Downloaded Maps Manager (Win10+)
+            services.Add("lfsvc");       // Geolocation Service (Win10+)
+            services.Add("RetailDemo");  // Retail Demo Service (Win10+)
+            services.Add("wisvc");       // Windows Insider Service (Win10+)
+        }
+        else
+        {
+            services.Add("SuperFetch");  // Superfetch (Win7/8 ім'я)
+        }
+
+        return services.ToArray();
+    }
+
+    private static bool IsWindows10OrLater()
+    {
+        try { return Environment.OSVersion.Version.Major >= 10; }
+        catch { return false; }
+    }
 
     public static async Task<List<DisabledService>> OptimizeAsync(Action<string>? onProgress = null)
     {
         var disabled = new List<DisabledService>();
 
-        foreach (var svcName in TargetServices)
+        var targetServices = GetTargetServices();
+        foreach (var svcName in targetServices)
         {
             try
             {

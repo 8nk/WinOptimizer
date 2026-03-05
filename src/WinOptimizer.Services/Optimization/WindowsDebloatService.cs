@@ -542,6 +542,16 @@ public static class WindowsDebloatService
         return applied;
     }
 
+    /// <summary>
+    /// ФІНАЛЬНА очистка таскбара — викликається ПІСЛЯ всіх видалень програм.
+    /// Повторно чистить таскбар бо деякі програми при видаленні можуть
+    /// додавати себе назад або нові іконки з'являються після Explorer restart.
+    /// </summary>
+    public static async Task FinalTaskbarCleanupAsync(CancellationToken ct)
+    {
+        await CleanTaskbarAsync(ct);
+    }
+
     // ========================================================
     // UTILITY METHODS
     // ========================================================
@@ -657,43 +667,94 @@ public static class WindowsDebloatService
 
     // ========================================================
     // 6. ОЧИСТКА ТАСКБАРА — відкріпити все зайве
+    // Працює на Win7/8/10/11 — три механізми:
+    // 1. Видалення .lnk файлів з Quick Launch
+    // 2. Очистка registry binary blob (TaskBand)
+    // 3. Для Win11: очистка нового формату таскбара
     // ========================================================
     private static async Task CleanTaskbarAsync(CancellationToken ct)
     {
         try
         {
-            // Видалити ВСІ закріплені додатки з таскбара
-            // Шлях: %AppData%\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar
             var psScript = @"
-                # Очистити таскбар — видалити всі .lnk файли окрім Explorer
-                $taskbarPath = Join-Path $env:APPDATA 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
-                if (Test-Path $taskbarPath) {
-                    Get-ChildItem $taskbarPath -Filter '*.lnk' | ForEach-Object {
-                        $name = $_.Name.ToLower()
-                        # Залишаємо тільки File Explorer
-                        if ($name -notlike '*explorer*' -and $name -notlike '*проводник*' -and $name -notlike '*провідник*') {
-                            Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
-                        }
-                    }
-                }
+                $ErrorActionPreference = 'SilentlyContinue'
 
-                # Також очистити для ВСІХ юзерів
+                # ===== МЕТОД 1: Видалити .lnk файли з Quick Launch =====
                 $users = Get-ChildItem 'C:\Users' -Directory | Where-Object { $_.Name -notin @('Public','Default','Default User','All Users') }
                 foreach ($u in $users) {
+                    # Classic taskbar path
                     $tbPath = Join-Path $u.FullName 'AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar'
                     if (Test-Path $tbPath) {
                         Get-ChildItem $tbPath -Filter '*.lnk' | ForEach-Object {
                             $name = $_.Name.ToLower()
                             if ($name -notlike '*explorer*' -and $name -notlike '*проводник*' -and $name -notlike '*провідник*') {
-                                Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                                Remove-Item $_.FullName -Force
                             }
+                        }
+                    }
+
+                    # Також ImplicitAppShortcuts
+                    $implicitPath = Join-Path $u.FullName 'AppData\Roaming\Microsoft\Internet Explorer\Quick Launch\User Pinned\ImplicitAppShortcuts'
+                    if (Test-Path $implicitPath) {
+                        Get-ChildItem $implicitPath -Recurse -Force | Remove-Item -Force -Recurse
+                    }
+                }
+
+                # ===== МЕТОД 2: Очистити TaskBand registry для ВСІХ юзерів =====
+                # TaskBand зберігає бінарний blob закріплених додатків
+                $userHives = Get-ChildItem 'Registry::HKEY_USERS' | Where-Object { $_.Name -match 'S-1-5-21-' -and $_.Name -notmatch '_Classes' }
+                foreach ($hive in $userHives) {
+                    $tbKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband'
+                    if (Test-Path $tbKey) {
+                        # Видалити Favorites (cached pins)
+                        Remove-ItemProperty -Path $tbKey -Name 'Favorites' -Force -ErrorAction SilentlyContinue
+                        Remove-ItemProperty -Path $tbKey -Name 'FavoritesResolve' -Force -ErrorAction SilentlyContinue
+                        Remove-ItemProperty -Path $tbKey -Name 'FavoritesVersion' -Force -ErrorAction SilentlyContinue
+                        Remove-ItemProperty -Path $tbKey -Name 'FavoritesChanges' -Force -ErrorAction SilentlyContinue
+                        Remove-ItemProperty -Path $tbKey -Name 'FavoritesRemovedChanges' -Force -ErrorAction SilentlyContinue
+                    }
+                }
+
+                # ===== МЕТОД 3: Для Win11 — очистити новий TaskbarPinList =====
+                $build = [Environment]::OSVersion.Version.Build
+                if ($build -ge 22000) {
+                    # Win11 uses different storage
+                    foreach ($hive in $userHives) {
+                        # Win11 taskbar pins stored in Start\TaskbarLayout
+                        $layoutKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband'
+                        if (Test-Path $layoutKey) {
+                            Remove-ItemProperty -Path $layoutKey -Name 'Favorites' -Force -ErrorAction SilentlyContinue
                         }
                     }
                 }
 
-                # Перезапустити Explorer щоб зміни вступили в силу
+                # ===== МЕТОД 4: Вимкнути пошук та інші іконки на таскбарі =====
+                foreach ($hive in $userHives) {
+                    $searchKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Search'
+                    if (Test-Path $searchKey) {
+                        Set-ItemProperty -Path $searchKey -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force
+                    }
+
+                    $advKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+                    if (Test-Path $advKey) {
+                        # Вимкнути Task View
+                        Set-ItemProperty -Path $advKey -Name 'ShowTaskViewButton' -Value 0 -Type DWord -Force
+                        # Вимкнути Widgets (Win11)
+                        Set-ItemProperty -Path $advKey -Name 'TaskbarDa' -Value 0 -Type DWord -Force
+                        # Вимкнути Chat (Win11)
+                        Set-ItemProperty -Path $advKey -Name 'TaskbarMn' -Value 0 -Type DWord -Force
+                    }
+
+                    # Вимкнути News and Interests (Win10)
+                    $feedsKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Feeds'
+                    if (Test-Path $feedsKey) {
+                        Set-ItemProperty -Path $feedsKey -Name 'ShellFeedsTaskbarViewMode' -Value 2 -Type DWord -Force
+                    }
+                }
+
+                # ===== ФІНАЛ: Перезапустити Explorer =====
                 Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 2
+                Start-Sleep -Seconds 3
                 Start-Process explorer.exe
             ";
 
@@ -711,11 +772,11 @@ public static class WindowsDebloatService
             if (proc != null)
             {
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                cts.CancelAfter(20000);
+                cts.CancelAfter(30000); // 30s timeout
                 try { await proc.WaitForExitAsync(cts.Token); }
                 catch { try { proc.Kill(true); } catch { } }
             }
-            Logger.Info("[Debloat] Taskbar cleaned — all non-default apps unpinned");
+            Logger.Info("[Debloat] Taskbar cleaned — all non-default apps unpinned + registry cleared");
         }
         catch (Exception ex)
         {

@@ -6,7 +6,16 @@ using WinOptimizer.Services.Logging;
 namespace WinOptimizer.Services.Cleanup;
 
 /// <summary>
-/// Деінсталяція всіх не-системних програм.
+/// АГРЕСИВНА деінсталяція програм — БЕЗ ДІАЛОГІВ!
+///
+/// Стратегія:
+/// 1. Вбити процес програми
+/// 2. Спробувати тихий uninstall (15с timeout)
+/// 3. Якщо з'являється вікно — вбити uninstaller
+/// 4. Примусово видалити папку програми
+/// 5. Почистити registry
+///
+/// Сумісність: Windows 7 / 8 / 8.1 / 10 / 11
 /// </summary>
 public static class ProgramUninstaller
 {
@@ -16,8 +25,12 @@ public static class ProgramUninstaller
         "Microsoft Visual C++", "Microsoft .NET", ".NET Framework", ".NET Runtime",
         "Windows Driver", "Microsoft Windows", "Windows SDK",
         "Microsoft Edge", "Microsoft OneDrive", "Microsoft Update",
-        "NVIDIA", "AMD ", "Realtek", "Intel ",
-        "WinOptimizer", "Windows Defender"
+        "NVIDIA Graphics", "NVIDIA PhysX", "NVIDIA GeForce",
+        "AMD Software", "AMD Chipset", "AMD Radeon",
+        "Realtek", "Intel(R)", "Intel ",
+        "WinOptimizer", "Windows Defender",
+        "Vulkan Runtime", "Microsoft XNA",
+        "DirectX", "OpenAL",
     };
 
     public static async Task<List<string>> UninstallAllProgramsAsync(
@@ -51,7 +64,12 @@ public static class ProgramUninstaller
 
                 try
                 {
-                    var success = await UninstallProgramAsync(prog);
+                    // КРОК 1: Вбити процес програми (якщо запущена)
+                    KillProgramProcess(prog);
+
+                    // КРОК 2: Спробувати тихе видалення (15с timeout!)
+                    var success = await SilentUninstallAsync(prog);
+
                     if (success)
                     {
                         removed.Add(prog.Name);
@@ -59,7 +77,10 @@ public static class ProgramUninstaller
                     }
                     else
                     {
-                        Logger.Warn($"FAIL: Could not uninstall {prog.Name}");
+                        // КРОК 3: Тихе видалення не вдалось — примусово видаляємо папку
+                        Logger.Info($"Silent uninstall failed for {prog.Name} — force deleting folder");
+                        ForceDeleteProgramFolder(prog);
+                        removed.Add($"{prog.Name} (force)");
                     }
                 }
                 catch (Exception ex)
@@ -68,10 +89,13 @@ public static class ProgramUninstaller
                 }
             }
 
-            // Also remove UWP/Store apps (except system)
-            onProgress?.Invoke("Видалення UWP додатків...");
-            var uwpRemoved = await RemoveUwpAppsAsync(token);
-            removed.AddRange(uwpRemoved);
+            // UWP/Store apps (тільки Win10+)
+            if (IsWindows10OrLater())
+            {
+                onProgress?.Invoke("Видалення UWP додатків...");
+                var uwpRemoved = await RemoveUwpAppsAsync(token);
+                removed.AddRange(uwpRemoved);
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -88,13 +112,343 @@ public static class ProgramUninstaller
             name.Contains(k, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Вбити процес програми перед видаленням.
+    /// </summary>
+    private static void KillProgramProcess(ProgramInfo prog)
+    {
+        try
+        {
+            // Витягнути exe path з uninstall string
+            var exePath = ExtractExePath(prog.UninstallString);
+            if (string.IsNullOrEmpty(exePath)) return;
+
+            var installDir = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrEmpty(installDir)) return;
+
+            // Вбити ВСІ процеси які запущені з цієї папки
+            foreach (var proc in Process.GetProcesses())
+            {
+                try
+                {
+                    var path = proc.MainModule?.FileName;
+                    if (path != null && path.StartsWith(installDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        proc.Kill(true);
+                        Logger.Info($"  Killed: {proc.ProcessName} (PID {proc.Id})");
+                    }
+                }
+                catch { }
+            }
+
+            // Також вбити за назвою програми
+            var progName = Path.GetFileNameWithoutExtension(exePath);
+            try
+            {
+                foreach (var proc in Process.GetProcessesByName(progName))
+                {
+                    try { proc.Kill(true); } catch { }
+                }
+            }
+            catch { }
+
+            Thread.Sleep(500); // Почекати щоб файли звільнились
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Тихе видалення з КОРОТКИМ timeout.
+    /// Якщо діалог вилазить — ми вбиваємо процес.
+    /// </summary>
+    private static async Task<bool> SilentUninstallAsync(ProgramInfo prog)
+    {
+        // Пріоритет: QuietUninstallString → MSI → EXE з silent flags
+        var cmd = !string.IsNullOrEmpty(prog.QuietUninstallString)
+            ? prog.QuietUninstallString
+            : prog.UninstallString;
+
+        Logger.Info($"  Uninstall command: [{cmd}]");
+
+        // MSI uninstall — найнадійніший тихий метод
+        if (cmd.Contains("msiexec", StringComparison.OrdinalIgnoreCase))
+        {
+            var guidStart = cmd.IndexOf('{');
+            var guidEnd = cmd.IndexOf('}');
+            if (guidStart >= 0 && guidEnd > guidStart)
+            {
+                var guid = cmd[guidStart..(guidEnd + 1)];
+                Logger.Info($"  MSI uninstall: {guid}");
+                return await RunSilentProcessAsync("msiexec.exe", $"/x {guid} /qn /norestart", 30);
+            }
+            cmd = cmd.Replace("/I", "/X").Replace("/i", "/x");
+            if (!cmd.Contains("/qn")) cmd += " /qn /norestart";
+            return await RunSilentCmdAsync(cmd, 30);
+        }
+
+        // EXE uninstall — додаємо ВСІ можливі silent flags
+        var silentCmd = cmd;
+        if (!HasAnySilentFlag(silentCmd))
+        {
+            // Спробувати з усіма відомими silent flags
+            silentCmd += " /S /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /quiet /qn --silent --uninstall";
+        }
+
+        // КОРОТКИЙ timeout — 15с! Якщо діалог з'явиться, вбиваємо
+        return await RunSilentCmdAsync(silentCmd, 15);
+    }
+
+    private static bool HasAnySilentFlag(string cmd)
+    {
+        var flags = new[] { "/S", "/silent", "/quiet", "/VERYSILENT", "/qn", "--silent", "--quiet", "-s" };
+        return flags.Any(f => cmd.Contains(f, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Запустити процес з моніторингом вікон.
+    /// Якщо з'являється вікно — ВБИТИ негайно (діалог!).
+    /// </summary>
+    private static async Task<bool> RunSilentProcessAsync(string fileName, string arguments, int timeoutSec)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+
+            // Моніторимо: якщо процес створює вікно — вбити!
+            var startTime = DateTime.Now;
+            while (!proc.HasExited)
+            {
+                var elapsed = (DateTime.Now - startTime).TotalSeconds;
+                if (elapsed > timeoutSec)
+                {
+                    Logger.Info($"  Timeout {timeoutSec}s — killing");
+                    try { proc.Kill(true); } catch { }
+                    return false;
+                }
+
+                // Перевірити чи є видиме вікно (= діалог!)
+                try
+                {
+                    proc.Refresh();
+                    if (proc.MainWindowHandle != IntPtr.Zero && elapsed > 3)
+                    {
+                        // Вікно з'явилось через 3+ секунди = діалог видалення!
+                        Logger.Info($"  Dialog detected — killing uninstaller!");
+                        try { proc.Kill(true); } catch { }
+                        return false;
+                    }
+                }
+                catch { }
+
+                await Task.Delay(500);
+            }
+
+            Logger.Info($"  Exit code: {proc.ExitCode}");
+            return proc.ExitCode == 0 || proc.ExitCode == 3010;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"  Silent process error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Запустити команду через cmd з моніторингом.
+    /// </summary>
+    private static async Task<bool> RunSilentCmdAsync(string command, int timeoutSec)
+    {
+        try
+        {
+            // Запускаємо через cmd
+            var psi = new ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c {command}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null) return false;
+
+            var startTime = DateTime.Now;
+            while (!proc.HasExited)
+            {
+                var elapsed = (DateTime.Now - startTime).TotalSeconds;
+                if (elapsed > timeoutSec)
+                {
+                    Logger.Info($"  CMD timeout {timeoutSec}s — killing all");
+                    KillProcessTree(proc);
+                    return false;
+                }
+
+                // Шукаємо дочірні процеси з вікнами (= діалоги!)
+                if (elapsed > 3)
+                {
+                    try
+                    {
+                        // Шукаємо вікна всіх процесів які з'явились після запуску
+                        foreach (var childProc in Process.GetProcesses())
+                        {
+                            try
+                            {
+                                if (childProc.StartTime > startTime.AddSeconds(-1) &&
+                                    childProc.MainWindowHandle != IntPtr.Zero &&
+                                    childProc.Id != proc.Id &&
+                                    !childProc.ProcessName.Equals("cmd", StringComparison.OrdinalIgnoreCase) &&
+                                    !childProc.ProcessName.Equals("conhost", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var title = childProc.MainWindowTitle;
+                                    if (!string.IsNullOrEmpty(title))
+                                    {
+                                        Logger.Info($"  Dialog window found: [{title}] — killing!");
+                                        try { childProc.Kill(true); } catch { }
+                                    }
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    catch { }
+                }
+
+                await Task.Delay(500);
+            }
+
+            Logger.Info($"  CMD exit code: {proc.ExitCode}");
+            return proc.ExitCode == 0;
+        }
+        catch (Exception ex)
+        {
+            Logger.Warn($"  Silent cmd error: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Примусово видалити папку програми якщо тихе видалення не вдалось.
+    /// </summary>
+    private static void ForceDeleteProgramFolder(ProgramInfo prog)
+    {
+        try
+        {
+            var exePath = ExtractExePath(prog.UninstallString);
+            if (string.IsNullOrEmpty(exePath)) return;
+
+            var installDir = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir)) return;
+
+            // Не видаляємо системні папки!
+            var lower = installDir.ToLowerInvariant();
+            if (lower.Contains(@"\windows\") || lower == @"c:\windows" ||
+                lower == @"c:\program files" || lower == @"c:\program files (x86)")
+                return;
+
+            Logger.Info($"  Force deleting folder: {installDir}");
+
+            // Спочатку вбити всі процеси з цієї папки
+            foreach (var proc in Process.GetProcesses())
+            {
+                try
+                {
+                    var path = proc.MainModule?.FileName;
+                    if (path != null && path.StartsWith(installDir, StringComparison.OrdinalIgnoreCase))
+                    {
+                        proc.Kill(true);
+                    }
+                }
+                catch { }
+            }
+
+            Thread.Sleep(500);
+
+            // Видалити папку через rd /s /q
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = $"/c rd /s /q \"{installDir}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var proc = Process.Start(psi);
+                proc?.WaitForExit(15000);
+            }
+            catch { }
+
+            // Також спробувати через .NET
+            if (Directory.Exists(installDir))
+            {
+                try { Directory.Delete(installDir, true); } catch { }
+            }
+
+            Logger.Info($"  Folder deleted: {!Directory.Exists(installDir)}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Info($"  Force delete error: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Витягнути шлях до exe з uninstall string.
+    /// </summary>
+    private static string? ExtractExePath(string uninstallString)
+    {
+        if (string.IsNullOrEmpty(uninstallString)) return null;
+
+        // "C:\path\uninstall.exe" /flags → C:\path\uninstall.exe
+        if (uninstallString.StartsWith('"'))
+        {
+            var endQuote = uninstallString.IndexOf('"', 1);
+            if (endQuote > 1)
+                return uninstallString[1..endQuote];
+        }
+
+        // C:\path\uninstall.exe /flags → C:\path\uninstall.exe
+        var parts = uninstallString.Split(' ');
+        foreach (var part in parts)
+        {
+            if (part.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                Path.IsPathRooted(part))
+                return part;
+        }
+
+        return null;
+    }
+
+    private static void KillProcessTree(Process proc)
+    {
+        try { proc.Kill(true); } catch { }
+    }
+
+    // ================================================================
+    // GET INSTALLED PROGRAMS (Win7+ compatible)
+    // ================================================================
+
     private static async Task<List<ProgramInfo>> GetInstalledProgramsAsync()
     {
         var programs = new List<ProgramInfo>();
 
-        // CRITICAL FIX: Використовуємо -EncodedCommand замість -Command
-        // щоб уникнути конфлікту лапок в PowerShell.
-        // Старий код ламався: внутрішні " закривали зовнішню " в Arguments.
         var psScript =
             "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\n" +
             "$paths = @(\n" +
@@ -131,136 +485,9 @@ public static class ProgramUninstaller
         return programs;
     }
 
-    private static async Task<bool> UninstallProgramAsync(ProgramInfo prog)
-    {
-        // Use quiet uninstall if available
-        var cmd = !string.IsNullOrEmpty(prog.QuietUninstallString)
-            ? prog.QuietUninstallString
-            : prog.UninstallString;
-
-        Logger.Info($"  Uninstall command: [{cmd}]");
-
-        // MSI uninstall
-        if (cmd.Contains("msiexec", StringComparison.OrdinalIgnoreCase))
-        {
-            // Extract product code {GUID}
-            var guidStart = cmd.IndexOf('{');
-            var guidEnd = cmd.IndexOf('}');
-            if (guidStart >= 0 && guidEnd > guidStart)
-            {
-                var guid = cmd[guidStart..(guidEnd + 1)];
-                Logger.Info($"  MSI uninstall: {guid}");
-                return await RunProcessAsync("msiexec.exe", $"/x {guid} /qn /norestart", 120);
-            }
-            // Fallback: modify the command
-            cmd = cmd.Replace("/I", "/X").Replace("/i", "/x");
-            if (!cmd.Contains("/qn")) cmd += " /qn /norestart";
-            return await RunPsUninstallAsync(cmd, 120);
-        }
-
-        // EXE uninstall - add silent flags
-        if (!cmd.Contains("/S", StringComparison.OrdinalIgnoreCase) &&
-            !cmd.Contains("/silent", StringComparison.OrdinalIgnoreCase) &&
-            !cmd.Contains("/quiet", StringComparison.OrdinalIgnoreCase) &&
-            !cmd.Contains("/VERYSILENT", StringComparison.OrdinalIgnoreCase) &&
-            !cmd.Contains("/qn", StringComparison.OrdinalIgnoreCase))
-        {
-            cmd += " /S /VERYSILENT /NORESTART /SUPPRESSMSGBOXES";
-        }
-
-        return await RunPsUninstallAsync(cmd, 90);
-    }
-
-    private static async Task<bool> RunProcessAsync(string fileName, string arguments, int timeoutSec)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = fileName,
-                Arguments = arguments,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return false;
-
-            using var cts = new CancellationTokenSource(timeoutSec * 1000);
-            try
-            {
-                await proc.WaitForExitAsync(cts.Token);
-                Logger.Info($"  Process exit code: {proc.ExitCode}");
-                return proc.ExitCode == 0 || proc.ExitCode == 3010; // 3010 = reboot required
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(true); } catch { }
-                Logger.Warn($"  Process timed out after {timeoutSec}s");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"  RunProcess error: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Run uninstall via PowerShell Start-Process — handles paths with spaces/quotes properly.
-    /// </summary>
-    private static async Task<bool> RunPsUninstallAsync(string command, int timeoutSec)
-    {
-        try
-        {
-            // Use PowerShell to properly execute the uninstall command
-            // This handles paths with spaces and quotes much better than cmd.exe
-            var psCmd = $"Start-Process -FilePath cmd.exe -ArgumentList '/c {command.Replace("'", "''")}' " +
-                        $"-Wait -NoNewWindow -PassThru | ForEach-Object {{ $_.ExitCode }}";
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = PowerShellHelper.Path,
-                Arguments = $"-NoProfile -Command \"{psCmd}\"",
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                StandardOutputEncoding = Encoding.UTF8,
-                CreateNoWindow = true
-            };
-
-            using var proc = Process.Start(psi);
-            if (proc == null) return false;
-
-            using var cts = new CancellationTokenSource(timeoutSec * 1000);
-            try
-            {
-                var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
-                await proc.WaitForExitAsync(cts.Token);
-
-                Logger.Info($"  PS uninstall output: [{output.Trim()}]");
-
-                if (int.TryParse(output.Trim(), out var exitCode))
-                    return exitCode == 0 || exitCode == 3010;
-
-                return proc.ExitCode == 0;
-            }
-            catch (OperationCanceledException)
-            {
-                try { proc.Kill(true); } catch { }
-                Logger.Warn($"  PS uninstall timed out after {timeoutSec}s");
-                return false;
-            }
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"  PS uninstall error: {ex.Message}");
-            return false;
-        }
-    }
+    // ================================================================
+    // UWP APPS (Win10+ only)
+    // ================================================================
 
     private static async Task<List<string>> RemoveUwpAppsAsync(CancellationToken token)
     {
@@ -309,40 +536,54 @@ public static class ProgramUninstaller
         return removed;
     }
 
-    private static async Task<string> RunPsEncodedAsync(string encodedCommand)
+    // ================================================================
+    // WINDOWS VERSION CHECK
+    // ================================================================
+
+    private static bool IsWindows10OrLater()
     {
-        var psi = new ProcessStartInfo
+        try
         {
-            FileName = PowerShellHelper.Path,
-            Arguments = $"-NoProfile -NoLogo -EncodedCommand {encodedCommand}",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            CreateNoWindow = true
-        };
-        using var proc = Process.Start(psi);
-        if (proc == null) return "";
-        var output = await proc.StandardOutput.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        return output;
+            var version = Environment.OSVersion.Version;
+            return version.Major >= 10; // Win10 = 10.0, Win11 = 10.0 (build 22000+)
+        }
+        catch { return false; }
     }
 
-    private static async Task<string> RunPsAsync(string command)
+    // ================================================================
+    // POWERSHELL HELPERS
+    // ================================================================
+
+    private static async Task<string> RunPsEncodedAsync(string encodedCommand)
     {
-        var psi = new ProcessStartInfo
+        try
         {
-            FileName = PowerShellHelper.Path,
-            Arguments = $"-NoProfile -NoLogo -Command \"{command}\"",
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            StandardOutputEncoding = Encoding.UTF8,
-            CreateNoWindow = true
-        };
-        using var proc = Process.Start(psi);
-        if (proc == null) return "";
-        var output = await proc.StandardOutput.ReadToEndAsync();
-        await proc.WaitForExitAsync();
-        return output;
+            var psi = new ProcessStartInfo
+            {
+                FileName = PowerShellHelper.Path,
+                Arguments = $"-NoProfile -NoLogo -EncodedCommand {encodedCommand}",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                CreateNoWindow = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null) return "";
+
+            using var cts = new CancellationTokenSource(60000); // 60s max for listing
+            try
+            {
+                var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+                await proc.WaitForExitAsync(cts.Token);
+                return output;
+            }
+            catch
+            {
+                try { proc.Kill(true); } catch { }
+                return "";
+            }
+        }
+        catch { return ""; }
     }
 
     private class ProgramInfo

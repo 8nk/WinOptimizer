@@ -466,10 +466,33 @@ public static class BleachBitService
     }
 
     /// <summary>
+    /// Перевірити чи BleachBit може запуститись (є всі DLL).
+    /// BleachBit потребує MSVCR100.dll — якщо його немає, пропускаємо.
+    /// </summary>
+    private static bool CanRunBleachBit()
+    {
+        var sys32 = Environment.SystemDirectory;
+        var dllPath = Path.Combine(sys32, "MSVCR100.dll");
+        if (File.Exists(dllPath)) return true;
+
+        // SysWOW64 (32-bit DLL на 64-bit OS)
+        var winDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var wow64 = Path.Combine(winDir, "SysWOW64", "MSVCR100.dll");
+        if (File.Exists(wow64)) return true;
+
+        Logger.Warn("[BleachBit] MSVCR100.dll not found — skipping (would show error dialog)");
+        return false;
+    }
+
+    /// <summary>
     /// Run BleachBit CLI with args and return stdout.
+    /// Перед запуском перевіряє наявність MSVCR100.dll.
     /// </summary>
     private static async Task<string> RunBleachBitAsync(string args, int timeoutSec, CancellationToken token)
     {
+        if (!CanRunBleachBit())
+            return "";
+
         var psi = new ProcessStartInfo
         {
             FileName = ExePath,
