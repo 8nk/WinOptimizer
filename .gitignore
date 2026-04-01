@@ -26,3 +26,5 @@ packages/
 # Self-contained publish artifacts
 *.exe
 !build.sh
+CLAUDE.md
+LastChange.md
