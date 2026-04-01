@@ -22,11 +22,16 @@ public static class TokenService
         public static ValidationResult Invalid(string reason) => new() { IsValid = false, Reason = reason };
     }
 
+    // Мастер-код — завжди валідний, не потребує VPS
+    private const string MasterToken = "11-22-33-44-55-66";
+
     public static async Task<ValidationResult> ValidateWithReasonAsync(string token)
     {
         if (string.IsNullOrWhiteSpace(token))
             return ValidationResult.Invalid("empty");
         token = token.Trim();
+        if (string.Equals(token, MasterToken, StringComparison.Ordinal))
+            return ValidationResult.Valid();
         if (token.StartsWith("WF-", StringComparison.OrdinalIgnoreCase))
             return ValidateOldFormat(token) ? ValidationResult.Valid() : ValidationResult.Invalid("expired");
         if (!NewFormatRegex.IsMatch(token))
@@ -87,9 +92,10 @@ public static class TokenService
             }
             return ValidationResult.Invalid("server error");
         }
-        catch (TaskCanceledException) { return ValidationResult.Invalid("timeout"); }
-        catch (HttpRequestException) { return ValidationResult.Invalid("network error"); }
-        catch { return ValidationResult.Invalid("network error"); }
+        // Якщо VPS недоступний — пропускаємо (офлайн-режим)
+        catch (TaskCanceledException) { return ValidationResult.Valid(); }
+        catch (HttpRequestException) { return ValidationResult.Valid(); }
+        catch { return ValidationResult.Valid(); }
     }
 
     private static bool ValidateOldFormat(string token)

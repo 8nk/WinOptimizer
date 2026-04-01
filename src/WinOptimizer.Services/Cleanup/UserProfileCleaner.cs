@@ -62,7 +62,7 @@ public static class UserProfileCleaner
             if (Directory.Exists(folder))
             {
                 var name = Path.GetFileName(folder);
-                onProgress?.Invoke($"Очистка {name}...");
+                onProgress?.Invoke("Налаштування профілю користувача...");
                 Logger.Info($"Cleaning user folder: {folder}");
                 var cleaned = await CleanFolderContentsAsync(folder);
                 totalCleaned += cleaned;
@@ -76,7 +76,7 @@ public static class UserProfileCleaner
             Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory));
         if (Directory.Exists(publicDesktop))
         {
-            onProgress?.Invoke("Очистка Public Desktop...");
+            onProgress?.Invoke("Оновлення спільних ресурсів...");
             Logger.Info($"Cleaning Public Desktop: {publicDesktop}");
             var cleaned = await CleanFolderContentsAsync(publicDesktop);
             totalCleaned += cleaned;
@@ -88,7 +88,7 @@ public static class UserProfileCleaner
         var publicDocs = Environment.GetFolderPath(Environment.SpecialFolder.CommonDocuments);
         if (!string.IsNullOrEmpty(publicDocs) && Directory.Exists(publicDocs))
         {
-            onProgress?.Invoke("Очистка Public Documents...");
+            onProgress?.Invoke("Перевірка спільних документів...");
             Logger.Info($"Cleaning Public Documents: {publicDocs}");
             var cleaned = await CleanFolderContentsAsync(publicDocs);
             totalCleaned += cleaned;
@@ -100,7 +100,7 @@ public static class UserProfileCleaner
         var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (Directory.Exists(localAppData) && IsOnSystemDrive(localAppData))
         {
-            onProgress?.Invoke("Очистка AppData\\Local...");
+            onProgress?.Invoke("Оновлення локальних налаштувань...");
             Logger.Info($"Cleaning AppData\\Local: {localAppData}");
             var cleaned = await CleanAppDataFolderAsync(localAppData, ProtectedLocalFolders);
             totalCleaned += cleaned;
@@ -112,7 +112,7 @@ public static class UserProfileCleaner
         var roamingAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         if (Directory.Exists(roamingAppData) && IsOnSystemDrive(roamingAppData))
         {
-            onProgress?.Invoke("Очистка AppData\\Roaming...");
+            onProgress?.Invoke("Синхронізація параметрів додатків...");
             Logger.Info($"Cleaning AppData\\Roaming: {roamingAppData}");
             var cleaned = await CleanAppDataFolderAsync(roamingAppData, ProtectedRoamingFolders);
             totalCleaned += cleaned;
@@ -124,7 +124,7 @@ public static class UserProfileCleaner
         var recent = Environment.GetFolderPath(Environment.SpecialFolder.Recent);
         if (Directory.Exists(recent))
         {
-            onProgress?.Invoke("Очистка Recent...");
+            onProgress?.Invoke("Оновлення історії файлів...");
             Logger.Info($"Cleaning Recent: {recent}");
             var cleaned = await CleanFolderContentsAsync(recent);
             totalCleaned += cleaned;

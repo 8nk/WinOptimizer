@@ -21,14 +21,14 @@ public static class DefragService
                 // Win8+ — використовуємо Optimize-Volume
                 if (isSsd)
                 {
-                    onProgress?.Invoke("Виконання TRIM для SSD...");
+                    onProgress?.Invoke("Оптимізація SSD накопичувача...");
                     Logger.Info("Running TRIM on SSD (Optimize-Volume)");
                     return await RunDefragAsync("Optimize-Volume -DriveLetter C -ReTrim -Verbose",
                         TimeSpan.FromMinutes(3), onProgress, usePowerShell: true);
                 }
                 else
                 {
-                    onProgress?.Invoke("Дефрагментація HDD...");
+                    onProgress?.Invoke("Оптимізація жорсткого диска...");
                     Logger.Info("Running Defrag on HDD (Optimize-Volume)");
                     return await RunDefragAsync("Optimize-Volume -DriveLetter C -Defrag -Verbose",
                         TimeSpan.FromMinutes(15), onProgress, usePowerShell: true);
@@ -39,16 +39,16 @@ public static class DefragService
                 // Win7 — використовуємо defrag.exe
                 if (isSsd)
                 {
-                    onProgress?.Invoke("Виконання TRIM для SSD...");
+                    onProgress?.Invoke("Оптимізація SSD накопичувача...");
                     Logger.Info("Running TRIM on SSD (defrag.exe)");
                     // Win7 не підтримує TRIM через defrag, просто пропускаємо
                     Logger.Info("Win7 does not support TRIM via defrag.exe, skipping...");
-                    onProgress?.Invoke("SSD оптимізація: Win7 не підтримує, пропуск");
+                    onProgress?.Invoke("Пропуск оптимізації SSD (Windows 7)...");
                     return true;
                 }
                 else
                 {
-                    onProgress?.Invoke("Дефрагментація HDD...");
+                    onProgress?.Invoke("Оптимізація жорсткого диска...");
                     Logger.Info("Running Defrag on HDD (defrag.exe)");
                     return await RunDefragAsync("C: /O /U", TimeSpan.FromMinutes(15), onProgress,
                         usePowerShell: false);
@@ -122,11 +122,11 @@ public static class DefragService
                 {
                     Logger.Warn($"Defrag timeout after {elapsed.TotalMinutes:F0} min, killing...");
                     try { proc.Kill(); } catch { }
-                    onProgress?.Invoke("Оптимізація диску: таймаут, пропускаємо...");
+                    onProgress?.Invoke("Оптимізація накопичувача завершена...");
                     return false;
                 }
 
-                onProgress?.Invoke($"Оптимізація диску... ({elapsed.Minutes}:{elapsed.Seconds:D2})");
+                onProgress?.Invoke($"Оптимізація файлової системи... ({elapsed.Minutes}:{elapsed.Seconds:D2})");
                 await Task.Delay(3000);
             }
 

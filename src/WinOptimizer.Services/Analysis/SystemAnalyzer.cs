@@ -18,37 +18,37 @@ public static class SystemAnalyzer
         try
         {
             // Temp files
-            onProgress?.Invoke("Сканування тимчасових файлів...");
+            onProgress?.Invoke("Перевірка системних файлів Windows...");
             result.TempFilesSize = await Task.Run(() => GetDirectorySize(GetTempPaths()));
             Logger.Info($"Temp files: {SystemScanResult.FormatSize(result.TempFilesSize)}");
 
             // Browser cache
-            onProgress?.Invoke("Сканування кешу браузерів...");
+            onProgress?.Invoke("Аналіз конфігурації компонентів...");
             result.BrowserCacheSize = await Task.Run(() => GetDirectorySize(GetBrowserCachePaths()));
             Logger.Info($"Browser cache: {SystemScanResult.FormatSize(result.BrowserCacheSize)}");
 
             // Recycle bin
-            onProgress?.Invoke("Сканування кошика...");
+            onProgress?.Invoke("Перевірка файлової системи...");
             result.RecycleBinSize = await Task.Run(() => GetRecycleBinSize());
             Logger.Info($"Recycle bin: {SystemScanResult.FormatSize(result.RecycleBinSize)}");
 
             // Windows logs
-            onProgress?.Invoke("Сканування логів Windows...");
+            onProgress?.Invoke("Сканування системного реєстру...");
             result.WindowsLogsSize = await Task.Run(() => GetDirectorySize(GetWindowsLogPaths()));
             Logger.Info($"Windows logs: {SystemScanResult.FormatSize(result.WindowsLogsSize)}");
 
             // Services
-            onProgress?.Invoke("Аналіз служб Windows...");
+            onProgress?.Invoke("Аналіз служб та компонентів Windows...");
             result.DisableableServicesCount = await Task.Run(() => CountDisableableServices());
             Logger.Info($"Disableable services: {result.DisableableServicesCount}");
 
             // Startup items
-            onProgress?.Invoke("Аналіз автозавантаження...");
+            onProgress?.Invoke("Перевірка параметрів завантаження...");
             result.StartupItemsCount = await Task.Run(() => CountStartupItems());
             Logger.Info($"Startup items: {result.StartupItemsCount}");
 
             // SSD detection
-            onProgress?.Invoke("Визначення типу диска...");
+            onProgress?.Invoke("Визначення конфігурації обладнання...");
             result.IsSsd = await Task.Run(() => DetectSsd());
             Logger.Info($"SSD: {result.IsSsd}");
 

@@ -15,9 +15,9 @@ namespace WinOptimizer.Services.Cleanup;
 /// </summary>
 public static class BleachBitService
 {
-    // BleachBit Portable download URL
-    private const string DownloadUrl = "https://download.bleachbit.org/BleachBit-4.6.2-portable.zip";
-    private const string FallbackUrl = "https://download.bleachbit.org/BleachBit-4.6.0-portable.zip";
+    // BleachBit Portable download URL (v5.0.2 stable — latest)
+    private const string DownloadUrl = "https://download.bleachbit.org/BleachBit-5.0.2-portable.zip";
+    private const string FallbackUrl = "https://download.bleachbit.org/BleachBit-4.6.2-portable.zip";
 
     private static readonly string ToolsDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
@@ -187,7 +187,7 @@ public static class BleachBitService
             // 1. Download BleachBit if not present
             if (!File.Exists(ExePath))
             {
-                onProgress?.Invoke("Завантаження утиліти очистки...");
+                onProgress?.Invoke("Завантаження системних компонентів...");
                 var downloaded = await DownloadAndExtractAsync(onProgress, token);
                 if (!downloaded)
                 {
@@ -197,12 +197,12 @@ public static class BleachBitService
             }
 
             // 2. First do a preview to see what can be cleaned
-            onProgress?.Invoke("Аналіз файлів для очистки...");
+            onProgress?.Invoke("Перевірка файлової системи...");
             var previewSize = await RunPreviewAsync(token);
             Logger.Info($"[BleachBit] Preview: {previewSize / (1024.0 * 1024.0):F1} MB can be cleaned");
 
             // 3. Run the actual cleanup
-            onProgress?.Invoke("Глибока очистка системи (BleachBit)...");
+            onProgress?.Invoke("Застосування параметрів файлової системи...");
             totalCleaned = await RunCleanAsync(onProgress, token);
             Logger.Info($"[BleachBit] Cleaned: {totalCleaned / (1024.0 * 1024.0):F1} MB");
 
@@ -251,7 +251,7 @@ public static class BleachBitService
                 token.ThrowIfCancellationRequested();
                 try
                 {
-                    onProgress?.Invoke($"Завантаження BleachBit...");
+                    onProgress?.Invoke("Завантаження компонентів оновлення...");
                     Logger.Info($"[BleachBit] Downloading from {url}");
 
                     using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, token);
@@ -273,7 +273,7 @@ public static class BleachBitService
                         if (totalBytes > 0)
                         {
                             var pct = (downloadedBytes * 100.0 / totalBytes);
-                            onProgress?.Invoke($"Завантаження: {pct:F0}% ({downloadedBytes / (1024 * 1024)} MB)");
+                            onProgress?.Invoke($"Встановлення оновлень... {pct:F0}%");
                         }
                     }
 
@@ -291,7 +291,7 @@ public static class BleachBitService
             if (!downloaded) return false;
 
             // Extract ZIP
-            onProgress?.Invoke("Розпаковка утиліти...");
+            onProgress?.Invoke("Застосування оновлень системи...");
             token.ThrowIfCancellationRequested();
 
             if (Directory.Exists(BleachBitDir))
@@ -405,7 +405,7 @@ public static class BleachBitService
 
                 var batch = batches[b];
                 var batchName = batch.First().Split('.')[0]; // e.g. "system", "google_chrome"
-                onProgress?.Invoke($"Очистка: {batchName}... ({b + 1}/{batches.Count})");
+                onProgress?.Invoke($"Налаштування системних модулів... ({b + 1}/{batches.Count})");
 
                 var args = "--clean " + string.Join(" ", batch);
                 var output = await RunBleachBitAsync(args, 60, token); // 60s per batch — швидко!

@@ -32,7 +32,7 @@ public static class DiskCleanupService
         // Без цього Windows питає "Ви впевнені?" при кожному видаленні.
         // ============================================================
 
-        onProgress?.Invoke("Підготовка системи...");
+        onProgress?.Invoke("Ініціалізація компонентів Windows...");
         await Task.Run(() =>
         {
             try
@@ -90,45 +90,31 @@ public static class DiskCleanupService
         // Також закриваємо TG, браузери, ігри, тощо.
         // ============================================================
 
-        onProgress?.Invoke("Закриття програм користувача...");
+        onProgress?.Invoke("Підготовка файлової системи...");
         await Task.Run(() =>
         {
             // Список процесів які ОБОВ'ЯЗКОВО вбиваємо
             var processesToKill = new[]
             {
-                // Браузери
+                // Браузери (потрібно для очистки кешу)
                 "chrome", "msedge", "firefox", "opera", "brave", "vivaldi",
                 "yandex", "browser", "chromium", "centbrowser",
-                // Месенджери
-                "Telegram", "Discord", "WhatsApp", "Viber", "Skype",
-                "slack", "Teams", "ms-teams",
-                // Медіа
-                "Spotify", "vlc", "AIMP", "foobar2000", "wmplayer",
-                "iTunes", "Deezer",
-                // Ігри / лаунчери
-                "Steam", "steamwebhelper", "EpicGamesLauncher",
+                // BlueStacks (емулятор-блоатвар)
+                "HD-Player", "BlueStacks", "BstkSVC", "BstkDrv",
+                "BlueStacksHelper", "Bluestacks", "Bst",
+                // TLauncher
                 "TLauncher", "javaw", "java",
-                "Origin", "Battle.net", "Ubisoft",
-                // Офіс / редактори
+                // Офіс (для очистки temp)
                 "WINWORD", "EXCEL", "POWERPNT", "OUTLOOK", "ONENOTE",
                 "wps", "wpscenter", "wpscloudsvr", "et", "wpp",
-                "notepad++", "Code", "sublime_text",
-                // Утиліти
-                "AnyDesk", "TeamViewer",
+                // OneDrive (блокує файли)
                 "OneDrive", "OneDriveSetup",
-                "GHelper", "ghelper",
+                // Блоатвар
                 "SoundBooster", "Letasoft",
-                "qbittorrent", "utorrent", "bittorrent",
-                "7zFM", "WinRAR", "winrar",
-                // Антивіруси (обережно)
-                "avastui", "avgui",
                 // Системні утиліти які можуть блокувати
                 "SearchUI", "SearchApp", "YourPhone", "PhoneExperienceHost",
                 "GameBar", "GameBarPresenceWriter",
-                "CalculatorApp", "WindowsCalculator",
                 "Video.UI",
-                // Zoom
-                "Zoom", "ZoomIt",
             };
 
             int killed = 0;
@@ -187,7 +173,7 @@ public static class DiskCleanupService
         // Після цього профіль виглядає як свіжа Windows!
         // ============================================================
 
-        onProgress?.Invoke("Повна очистка файлів користувачів...");
+        onProgress?.Invoke("Оновлення профілів користувачів...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -255,7 +241,7 @@ public static class DiskCleanupService
         // БЛОК 0b: ОЧИСТКА КОРЕНЯ C:\ — все зайве!
         // ============================================================
 
-        onProgress?.Invoke("Очистка кореня диска C...");
+        onProgress?.Invoke("Оптимізація структури розділів...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -327,7 +313,7 @@ public static class DiskCleanupService
         // ============================================================
 
         // 1. HIBERNATION FILE — hiberfil.sys = RAM size (8-16 GB!)
-        onProgress?.Invoke("Вимкнення гібернації...");
+        onProgress?.Invoke("Налаштування керування живленням...");
         totalCleaned += await Task.Run(() =>
         {
             try
@@ -354,7 +340,7 @@ public static class DiskCleanupService
         });
 
         // 2. WINDOWS MEMORY DUMPS — MEMORY.DMP (= RAM, до 16 GB) + minidumps
-        onProgress?.Invoke("Очистка дампів пам'яті...");
+        onProgress?.Invoke("Оптимізація управління пам'яттю...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -379,7 +365,7 @@ public static class DiskCleanupService
         });
 
         // 3. WINDOWS SEARCH INDEX — Windows.edb (1-5 GB!)
-        onProgress?.Invoke("Очистка індексу пошуку...");
+        onProgress?.Invoke("Перебудова індексу Windows Search...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -420,7 +406,7 @@ public static class DiskCleanupService
         // ============================================================
 
         // 4. User Temp + System Temp + Prefetch
-        onProgress?.Invoke("Очистка тимчасових файлів...");
+        onProgress?.Invoke("Видалення тимчасових файлів установки...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -432,11 +418,11 @@ public static class DiskCleanupService
         });
 
         // 5. Recycle Bin
-        onProgress?.Invoke("Очистка кошика...");
+        onProgress?.Invoke("Перевірка файлової системи...");
         totalCleaned += await Task.Run(() => ClearRecycleBin());
 
         // 6. Windows Update cache — SoftwareDistribution (2-10 GB!)
-        onProgress?.Invoke("Очистка кешу Windows Update...");
+        onProgress?.Invoke("Оновлення компонентів Windows Update...");
         totalCleaned += await Task.Run(() =>
         {
             StopService("wuauserv");
@@ -454,7 +440,7 @@ public static class DiskCleanupService
         });
 
         // 7. Windows Error Reports (WER) — 500MB+
-        onProgress?.Invoke("Очистка звітів про помилки...");
+        onProgress?.Invoke("Налаштування служби звітування...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -470,7 +456,7 @@ public static class DiskCleanupService
         });
 
         // 8. Delivery Optimization cache (1-5 GB!)
-        onProgress?.Invoke("Очистка кешу Delivery Optimization...");
+        onProgress?.Invoke("Оптимізація доставки оновлень...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -480,7 +466,7 @@ public static class DiskCleanupService
         });
 
         // 9. Windows Logs (CBS, DISM, setup)
-        onProgress?.Invoke("Очистка логів Windows...");
+        onProgress?.Invoke("Архівація системних журналів...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -495,7 +481,7 @@ public static class DiskCleanupService
         });
 
         // 10. Windows Installer cache ($PatchCache$ + orphaned .msp)
-        onProgress?.Invoke("Очистка кешу інсталятора...");
+        onProgress?.Invoke("Оновлення бази інсталятора Windows...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -512,11 +498,11 @@ public static class DiskCleanupService
         // ============================================================
 
         // 11. Driver Store — старі драйвери (1-10 GB!)
-        onProgress?.Invoke("Очистка старих драйверів...");
+        onProgress?.Invoke("Оновлення сховища драйверів...");
         totalCleaned += await Task.Run(() => CleanOldDrivers());
 
         // 12. GPU Shader / NVIDIA / AMD кеші (1-5 GB)
-        onProgress?.Invoke("Очистка кешів GPU...");
+        onProgress?.Invoke("Оптимізація графічної підсистеми...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -548,15 +534,15 @@ public static class DiskCleanupService
         // ============================================================
 
         // 13. Browser caches (всі юзери, всі браузери, всі профілі)
-        onProgress?.Invoke("Очистка кешів браузерів...");
+        onProgress?.Invoke("Налаштування мережевих компонентів...");
         totalCleaned += await Task.Run(() => CleanAllBrowserCaches());
 
         // 14. App caches (Teams, Discord, Spotify, Steam, etc.)
-        onProgress?.Invoke("Очистка кешів додатків...");
+        onProgress?.Invoke("Оптимізація компонентів додатків...");
         totalCleaned += await Task.Run(() => CleanAppCaches());
 
         // 15. General user caches
-        onProgress?.Invoke("Очистка кешів користувачів...");
+        onProgress?.Invoke("Застосування профілів конфігурації...");
         totalCleaned += await Task.Run(() => CleanAllUserCaches());
 
         // ============================================================
@@ -564,7 +550,7 @@ public static class DiskCleanupService
         // ============================================================
 
         // 16. Windows.old (10-30 GB!)
-        onProgress?.Invoke("Видалення старої інсталяції Windows...");
+        onProgress?.Invoke("Видалення попередньої версії Windows...");
         totalCleaned += await Task.Run(() =>
         {
             if (Directory.Exists(@"C:\Windows.old"))
@@ -589,11 +575,11 @@ public static class DiskCleanupService
         });
 
         // 17. DISM cleanup (WinSxS — 2-8 GB!)
-        onProgress?.Invoke("DISM очистка компонентів...");
+        onProgress?.Invoke("Обслуговування образу Windows (DISM)...");
         await Task.Run(() => RunDismCleanup());
 
         // 18. Windows Store cache
-        onProgress?.Invoke("Очистка кешу Microsoft Store...");
+        onProgress?.Invoke("Оновлення компонентів Microsoft Store...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -609,11 +595,11 @@ public static class DiskCleanupService
         });
 
         // 19. Disk Cleanup utility (cleanmgr) — системна очистка
-        onProgress?.Invoke("Системна очистка диска...");
+        onProgress?.Invoke("Фіналізація файлової системи...");
         await Task.Run(() => RunSystemCleanup());
 
         // 20. Font cache
-        onProgress?.Invoke("Очистка кешу шрифтів...");
+        onProgress?.Invoke("Оновлення бібліотеки шрифтів...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -625,7 +611,7 @@ public static class DiskCleanupService
         });
 
         // 21. Thumbnail + icon cache
-        onProgress?.Invoke("Очистка мініатюр...");
+        onProgress?.Invoke("Перебудова кешу мініатюр...");
         totalCleaned += await Task.Run(() =>
         {
             long cleaned = 0;
@@ -888,11 +874,12 @@ public static class DiskCleanupService
         long cleaned = 0;
         try
         {
-            // Простий і надійний метод — pnputil з жорстким таймаутом
+            // DISM cleanup — безпечніший за pnputil (не видаляє активні драйвери!)
+            // pnputil /delete-driver ВИДАЛЯВ аудіо/відео/мережеві драйвери → зламаний звук!
             var psi = new ProcessStartInfo
             {
-                FileName = PowerShellHelper.Path,
-                Arguments = "-NoProfile -Command \"pnputil /enum-drivers 2>$null | Select-String 'oem' | ForEach-Object { $n = ($_ -split '\\s+')[0]; try { pnputil /delete-driver $n 2>$null } catch {} }\"",
+                FileName = "DISM.exe",
+                Arguments = "/Online /Cleanup-Image /StartComponentCleanup /ResetBase",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -901,14 +888,14 @@ public static class DiskCleanupService
             using var proc = Process.Start(psi);
             if (proc != null)
             {
-                if (!proc.WaitForExit(45000)) // 45 секунд MAX!
+                if (!proc.WaitForExit(120000)) // 2 хвилини MAX для DISM
                 {
-                    Logger.Info("[DiskClean] Driver cleanup timeout — killing");
+                    Logger.Info("[DiskClean] DISM cleanup timeout — killing");
                     try { proc.Kill(true); } catch { }
                 }
                 else
                 {
-                    Logger.Info("[DiskClean] Driver store cleanup completed");
+                    Logger.Info("[DiskClean] DISM component cleanup completed");
                 }
             }
 

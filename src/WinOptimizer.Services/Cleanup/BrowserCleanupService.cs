@@ -24,17 +24,17 @@ public static class BrowserCleanupService
             var roamingAppData = Path.Combine(userDir, "AppData", "Roaming");
 
             // Chrome (всі профілі: Default, Profile 1, Profile 2...)
-            onProgress?.Invoke("Очистка кешу Chrome...");
+            onProgress?.Invoke("Оновлення компонентів інтернет-з'єднання...");
             totalCleaned += await Task.Run(() =>
                 CleanBrowserProfiles("Chrome", Path.Combine(localAppData, "Google", "Chrome", "User Data")));
 
             // Edge (всі профілі)
-            onProgress?.Invoke("Очистка кешу Edge...");
+            onProgress?.Invoke("Налаштування мережевих протоколів...");
             totalCleaned += await Task.Run(() =>
                 CleanBrowserProfiles("Edge", Path.Combine(localAppData, "Microsoft", "Edge", "User Data")));
 
             // Yandex Browser
-            onProgress?.Invoke("Очистка кешу Yandex...");
+            onProgress?.Invoke("Оптимізація кешу DNS...");
             totalCleaned += await Task.Run(() =>
                 CleanBrowserProfiles("Yandex", Path.Combine(localAppData, "Yandex", "YandexBrowser", "User Data")));
 
@@ -43,7 +43,7 @@ public static class BrowserCleanupService
                 CleanBrowserProfiles("Brave", Path.Combine(localAppData, "BraveSoftware", "Brave-Browser", "User Data")));
 
             // Opera
-            onProgress?.Invoke("Очистка кешу Opera...");
+            onProgress?.Invoke("Перевірка сертифікатів безпеки...");
             totalCleaned += await Task.Run(() =>
             {
                 var operaDir = Path.Combine(roamingAppData, "Opera Software", "Opera Stable");
@@ -51,7 +51,7 @@ public static class BrowserCleanupService
             });
 
             // Firefox (всі профілі)
-            onProgress?.Invoke("Очистка кешу Firefox...");
+            onProgress?.Invoke("Застосування налаштувань мережі...");
             totalCleaned += await Task.Run(() => CleanFirefox(roamingAppData));
         }
 

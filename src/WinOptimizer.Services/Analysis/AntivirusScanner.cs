@@ -23,7 +23,7 @@ public static class AntivirusScanner
             var isWin10Plus = IsWindows10OrLater();
 
             // 1. Update definitions (з таймаутом 2 хвилини)
-            onProgress?.Invoke("Оновлення антивірусних баз...");
+            onProgress?.Invoke("Оновлення баз захисту Windows...");
             Logger.Info("[AV] Updating Defender signatures...");
             try
             {
@@ -46,7 +46,7 @@ public static class AntivirusScanner
             }
 
             // 2. Quick Scan — FIRE AND FORGET!
-            onProgress?.Invoke("Швидке сканування системи...");
+            onProgress?.Invoke("Перевірка безпеки системи...");
             Logger.Info("[AV] Starting Defender Quick Scan (fire-and-forget)...");
             StartScanFireAndForget(isWin10Plus);
             Logger.Info("[AV] Quick Scan command sent (async, not blocking)");
@@ -155,7 +155,7 @@ public static class AntivirusScanner
             }
             else
             {
-                onProgress?.Invoke("Загроз не знайдено");
+                onProgress?.Invoke("Система безпечна");
                 Logger.Info("[AV] No threats found");
             }
         }

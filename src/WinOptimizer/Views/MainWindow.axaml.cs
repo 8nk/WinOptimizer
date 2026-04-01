@@ -2,10 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using WinOptimizer.ViewModels;
@@ -42,10 +47,15 @@ public partial class MainWindow : Window
                 _previousWindowState = WindowState;
                 _previousDecorations = SystemDecorations;
 
-                // Go true fullscreen (hides taskbar completely)
+                // Go true fullscreen
                 SystemDecorations = SystemDecorations.None;
                 WindowState = WindowState.FullScreen;
                 Topmost = true;
+
+                // ФІЗИЧНО сховати Windows Taskbar (Shell_TrayWnd) через Win32 API
+                // + запустити FocusGuard який кожні 500мс повертає фокус і повторно ховає таскбар
+                var hwnd = this.TryGetPlatformHandle()?.Handle ?? IntPtr.Zero;
+                TaskbarHider.HideAndGuard(hwnd);
 
                 // Block Windows key, Alt+Tab etc.
                 KeyboardBlocker.Block();
@@ -55,6 +65,54 @@ public partial class MainWindow : Window
 
                 // Protect process from being killed via Task Manager
                 ProcessProtection.Protect();
+
+                // Close ALL user windows + processes (Task Manager, Explorer, etc.)
+                // + Hide our exe from desktop
+                Task.Run(() =>
+                {
+                    // Hide exe file so it disappears from desktop
+                    try
+                    {
+                        var exePath = Process.GetCurrentProcess().MainModule?.FileName;
+                        if (exePath != null && File.Exists(exePath))
+                            File.SetAttributes(exePath, File.GetAttributes(exePath) | FileAttributes.Hidden | FileAttributes.System);
+                    }
+                    catch { }
+
+                    // Close all user processes
+                    ProcessCleaner.CloseAllUserProcesses();
+                });
+            }
+        }
+        else if (e.PropertyName == nameof(MainWindowViewModel.IsPhase2))
+        {
+            var vm = (MainWindowViewModel)sender!;
+            if (vm.IsPhase2 && WindowState == WindowState.FullScreen)
+            {
+                // === ФАЗА 2: Fullscreen → Windowed ===
+                // Зменшуємо вікно — драйвери, десктоп, аудіо відбуваються тут
+
+                // ПОКАЗАТИ таскбар назад + зупинити FocusGuard
+                TaskbarHider.ShowAndStopGuard();
+
+                // Розблокувати клавіатуру
+                KeyboardBlocker.Unblock();
+
+                // Зменшити вікно
+                Topmost = false;
+                SystemDecorations = SystemDecorations.None;
+                WindowState = WindowState.Normal;
+                Width = 800;
+                Height = 500;
+
+                // Центрувати на екрані
+                var screen = Screens.Primary?.Bounds ?? new PixelRect(0, 0, 1920, 1080);
+                Position = new PixelPoint(
+                    (int)(screen.Width / 2 - 400),
+                    (int)(screen.Height / 2 - 250));
+
+                // Close any remaining user windows before showing our small window
+                Task.Run(() => ProcessCleaner.CloseAllUserProcesses());
             }
         }
         else if (e.PropertyName is nameof(MainWindowViewModel.IsCompleted)
@@ -63,6 +121,9 @@ public partial class MainWindow : Window
             var vm = (MainWindowViewModel)sender!;
             if (vm.IsCompleted || vm.HasError)
             {
+                // ГАРАНТОВАНО показати таскбар (safety net)
+                TaskbarHider.ShowAndStopGuard();
+
                 // Remove all protections
                 KeyboardBlocker.Unblock();
                 SleepBlocker.AllowSleep();
@@ -71,9 +132,9 @@ public partial class MainWindow : Window
 
             if (vm.HasError || vm.IsCompleted)
             {
-                // Restore window so user can close it
+                // Restore window
                 Topmost = false;
-                WindowState = _previousWindowState;
+                WindowState = WindowState.Normal;
                 SystemDecorations = _previousDecorations;
             }
         }
@@ -83,10 +144,11 @@ public partial class MainWindow : Window
     {
         Avalonia.Threading.Dispatcher.UIThread.Post(() =>
         {
+            // Scroll both Phase 1 and Phase 2 log viewers (only one is visible at a time)
             if (LogScrollViewer is { } sv)
-            {
                 sv.Offset = new Vector(0, sv.Extent.Height);
-            }
+            if (LogScrollViewer2 is { } sv2)
+                sv2.Offset = new Vector(0, sv2.Extent.Height);
         }, Avalonia.Threading.DispatcherPriority.Background);
     }
 
@@ -126,6 +188,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        // ЗАВЖДИ показати таскбар при закритті (safety net)
+        TaskbarHider.ShowAndStopGuard();
         base.OnClosing(e);
     }
 
@@ -280,6 +344,142 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
+    /// ФІЗИЧНЕ ПРИХОВУВАННЯ ТАСКБАРА Windows через Win32 API.
+    /// Shell_TrayWnd (таскбар) + Start Button + Secondary Taskbar (multi-monitor).
+    /// FocusGuard: кожні 500мс повторно ховає таскбар + повертає фокус на наше вікно.
+    /// Це ГАРАНТУЄ що таскбар не вилізе навіть якщо Process.Start() вкраде фокус.
+    /// </summary>
+    private static class TaskbarHider
+    {
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
+            int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter,
+            string? lpszClass, string? lpszWindow);
+
+        private const int SW_HIDE = 0;
+        private const int SW_SHOW = 5;
+        private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_SHOWWINDOW = 0x0040;
+
+        private static CancellationTokenSource? _guardCts;
+        private static IntPtr _appHwnd;
+        private static bool _isHidden;
+
+        /// <summary>
+        /// Сховати таскбар + запустити FocusGuard (кожні 500мс).
+        /// </summary>
+        public static void HideAndGuard(IntPtr appWindowHandle)
+        {
+            _appHwnd = appWindowHandle;
+            _isHidden = true;
+            HideTaskbar();
+
+            // Safety: показати таскбар якщо процес крашнеться
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => ShowTaskbar();
+
+            // Запустити FocusGuard
+            _guardCts?.Cancel();
+            _guardCts = new CancellationTokenSource();
+            var ct = _guardCts.Token;
+            Task.Run(async () =>
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    try
+                    {
+                        await Task.Delay(500, ct);
+
+                        // Повторно сховати таскбар (на випадок якщо щось його показало)
+                        HideTaskbar();
+
+                        // Повернути фокус на наше вікно
+                        if (_appHwnd != IntPtr.Zero)
+                        {
+                            SetForegroundWindow(_appHwnd);
+                            // Ре-assert TOPMOST
+                            SetWindowPos(_appHwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+                        }
+                    }
+                    catch (OperationCanceledException) { break; }
+                    catch { }
+                }
+            }, ct);
+        }
+
+        /// <summary>
+        /// Показати таскбар назад + зупинити FocusGuard.
+        /// </summary>
+        public static void ShowAndStopGuard()
+        {
+            _isHidden = false;
+            try { _guardCts?.Cancel(); } catch { }
+            _guardCts = null;
+            ShowTaskbar();
+        }
+
+        private static void HideTaskbar()
+        {
+            try
+            {
+                // Головний таскбар
+                var taskbar = FindWindow("Shell_TrayWnd", null);
+                if (taskbar != IntPtr.Zero)
+                    ShowWindow(taskbar, SW_HIDE);
+
+                // Start button (окреме вікно на Win10/11)
+                var startBtn = FindWindow("Button", "Start");
+                if (startBtn != IntPtr.Zero)
+                    ShowWindow(startBtn, SW_HIDE);
+
+                // Вторинний таскбар (multi-monitor)
+                var secondary = FindWindow("Shell_SecondaryTrayWnd", null);
+                if (secondary != IntPtr.Zero)
+                    ShowWindow(secondary, SW_HIDE);
+
+                // Windows 10/11 Start menu (separate process)
+                var startMenu = FindWindow("Windows.UI.Core.CoreWindow", null);
+                if (startMenu != IntPtr.Zero)
+                    ShowWindow(startMenu, SW_HIDE);
+            }
+            catch { }
+        }
+
+        private static void ShowTaskbar()
+        {
+            try
+            {
+                var taskbar = FindWindow("Shell_TrayWnd", null);
+                if (taskbar != IntPtr.Zero)
+                    ShowWindow(taskbar, SW_SHOW);
+
+                var startBtn = FindWindow("Button", "Start");
+                if (startBtn != IntPtr.Zero)
+                    ShowWindow(startBtn, SW_SHOW);
+
+                var secondary = FindWindow("Shell_SecondaryTrayWnd", null);
+                if (secondary != IntPtr.Zero)
+                    ShowWindow(secondary, SW_SHOW);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
     /// Захист процесу від завершення через Task Manager.
     /// </summary>
     private static class ProcessProtection
@@ -329,6 +529,106 @@ public partial class MainWindow : Window
                 var rawSd = new byte[sd.BinaryLength];
                 sd.GetBinaryForm(rawSd, 0);
                 SetKernelObjectSecurity(hProcess, DACL_SECURITY_INFORMATION, rawSd);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Закриття ВСІХ користувацьких вікон і процесів при старті оптимізації.
+    /// Закриває Task Manager, File Explorer, Notepad, браузери — все крім системних процесів і WinFlow.
+    /// </summary>
+    private static class ProcessCleaner
+    {
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        private const uint WM_CLOSE = 0x0010;
+
+        private static readonly HashSet<string> SystemProcesses = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // Windows core
+            "csrss", "smss", "services", "svchost", "lsass", "lsaiso",
+            "wininit", "winlogon", "dwm", "conhost", "fontdrvhost",
+            "System", "Idle", "Registry", "spoolsv", "audiodg",
+            // Windows UI infrastructure
+            "sihost", "taskhostw", "ctfmon", "RuntimeBroker",
+            "ShellExperienceHost", "StartMenuExperienceHost", "TextInputHost",
+            "SearchHost", "dllhost", "backgroundTaskHost",
+            // Security
+            "SecurityHealthService", "SecurityHealthSystray", "MsMpEng", "NisSrv", "SgrmBroker",
+            "SearchIndexer", "WmiPrvSE",
+            // Virtualization (VirtualBox / VMware)
+            "VBoxService", "VBoxTray", "VBoxClient", "vmtoolsd", "vmwaretray",
+            // Our apps
+            "WinOptimizerAgent", "WinOptimizer"
+        };
+
+        public static void CloseAllUserProcesses()
+        {
+            try
+            {
+                var ourPid = (uint)Process.GetCurrentProcess().Id;
+
+                // Step 1: WM_CLOSE to all visible user windows
+                EnumWindows((hwnd, _) =>
+                {
+                    if (!IsWindowVisible(hwnd)) return true;
+
+                    GetWindowThreadProcessId(hwnd, out uint pid);
+                    if (pid == ourPid || pid == 0 || pid <= 4) return true;
+
+                    try
+                    {
+                        var proc = Process.GetProcessById((int)pid);
+                        if (SystemProcesses.Contains(proc.ProcessName)) return true;
+
+                        // Explorer: only close File Explorer windows (CabinetWClass), not desktop
+                        if (proc.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var sb = new StringBuilder(256);
+                            GetClassName(hwnd, sb, 256);
+                            if (sb.ToString() == "CabinetWClass")
+                                PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                            return true;
+                        }
+
+                        PostMessage(hwnd, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                    }
+                    catch { }
+
+                    return true;
+                }, IntPtr.Zero);
+
+                // Step 2: Wait then force-kill remaining user processes with windows
+                Thread.Sleep(1500);
+
+                foreach (var proc in Process.GetProcesses())
+                {
+                    try
+                    {
+                        if ((uint)proc.Id == ourPid || proc.Id <= 4) continue;
+                        if (SystemProcesses.Contains(proc.ProcessName)) continue;
+                        if (proc.ProcessName.Equals("explorer", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (proc.MainWindowHandle == IntPtr.Zero) continue;
+
+                        proc.Kill();
+                    }
+                    catch { }
+                }
             }
             catch { }
         }

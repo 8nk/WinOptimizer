@@ -64,7 +64,11 @@ public class RollbackState
         var dir = Path.GetDirectoryName(FilePath)!;
         Directory.CreateDirectory(dir);
         var json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(FilePath, json);
+        // Атомарний запис: спочатку temp файл, потім File.Move
+        // Якщо ПК крашнеться під час запису — старий файл залишиться цілим
+        var tempPath = FilePath + ".tmp";
+        File.WriteAllText(tempPath, json);
+        File.Move(tempPath, FilePath, overwrite: true);
     }
 
     public static RollbackState? Load()

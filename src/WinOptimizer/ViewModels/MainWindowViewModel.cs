@@ -56,6 +56,13 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _hasError = false;
 
+    /// <summary>
+    /// Фаза 2 — вікно зменшується, драйвери + фінал.
+    /// Fullscreen (Фаза 1) → Windowed (Фаза 2) при переході до DriverUpdate.
+    /// </summary>
+    [ObservableProperty]
+    private bool _isPhase2 = false;
+
     [ObservableProperty]
     private bool _showPercentage = false;
 
@@ -134,6 +141,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private string _currentOsText = "";
 
+    // Phase 2 header — shows "Windows installation complete!" when switching to windowed mode
+    public string Phase2HeaderText => _language switch
+    {
+        "en" => "\u2705 Windows installation complete!",
+        "ru" => "\u2705 Установка Windows завершена!",
+        _ => "\u2705 Установку Windows завершено!"
+    };
+
     // Result display
     [ObservableProperty]
     private bool _hasResult = false;
@@ -175,6 +190,14 @@ public partial class MainWindowViewModel : ViewModelBase
     partial void OnShowActivationScreenChanged(bool value) => UpdateShowMainScreen();
     partial void OnShowLanguageScreenChanged(bool value) => UpdateShowMainScreen();
     partial void OnIsOptimizingChanged(bool value) => UpdateShowMainScreen();
+
+    /// <summary>
+    /// При переході в Phase 2 — оновити всі responsive розміри для вікна 800×500.
+    /// </summary>
+    partial void OnIsPhase2Changed(bool value)
+    {
+        OnPropertyChanged(nameof(Phase2HeaderText));
+    }
 
     private void UpdateShowMainScreen()
     {
@@ -508,6 +531,13 @@ public partial class MainWindowViewModel : ViewModelBase
         ProgressPercent = state.ProgressPercent;
         ShowPercentage = state.ProgressPercent > 0 && state.ProgressPercent < 100;
         ProgressPercentageText = ShowPercentage ? $"{state.ProgressPercent:F1}%" : "";
+
+        // Phase 2: switch to windowed mode when reaching DriverUpdate
+        if (!IsPhase2 && state.CurrentStep >= OptimizationStep.DriverUpdate
+            && state.CurrentStep != OptimizationStep.Error)
+        {
+            IsPhase2 = true;
+        }
 
         // Completed / Error
         IsCompleted = state.CurrentStep == OptimizationStep.Completed;
