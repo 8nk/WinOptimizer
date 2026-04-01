@@ -55,13 +55,6 @@ public static class DialogKillerService
         "dwwin",             // Dr. Watson
         "dw20",              // Dr. Watson
         "splwow64",          // Print spooler dialog
-        // Avast / AVG / Avira UI процеси (нотифікації, звуки, "Не турбувати")
-        "AvastUI",
-        "AvastBrowser",
-        "AvastSecureBrowser",
-        "avgui",
-        "avguard",
-        "avgnt",
     };
 
     // Process NAME PATTERNS — if process name CONTAINS any of these, KILL

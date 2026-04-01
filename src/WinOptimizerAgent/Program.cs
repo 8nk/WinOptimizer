@@ -598,30 +598,6 @@ class Program
                 "Get-Process -Name 'msedge', 'MicrosoftEdgeUpdate' -ErrorAction SilentlyContinue | " +
                 "Stop-Process -Force -ErrorAction SilentlyContinue");
 
-            // 4.6. Відключити Avast/AVG Self-Protection + зупинити служби
-            // (Avast може блокувати агента під час відкату!)
-            Log("[PreFlight] Disabling Avast/AVG self-protection...");
-            RunPowerShell(
-                // Відключити self-protection через реєстр
-                "$regPaths = @(" +
-                "  'HKLM:\\SOFTWARE\\AVAST Software\\Avast\\persistency'," +
-                "  'HKLM:\\SOFTWARE\\AVG\\Persistent Data\\AVG Antivirus\\persistency'" +
-                "); " +
-                "foreach ($p in $regPaths) { " +
-                "  if (Test-Path $p) { Set-ItemProperty -Path $p -Name 'SelfDefense' -Value 0 -ErrorAction SilentlyContinue } " +
-                "}; " +
-                // Зупинити kernel driver
-                "sc.exe stop aswSP 2>$null; " +
-                "sc.exe stop aswSnx 2>$null; " +
-                "sc.exe stop aswMonFlt 2>$null; " +
-                // Зупинити служби
-                "$svcs = @('avast! Antivirus','AvastWscReporter','aswbidsagent','aswEngSrv','AVGSvc','avgwd'); " +
-                "foreach ($s in $svcs) { Stop-Service -Name $s -Force -ErrorAction SilentlyContinue }; " +
-                // Вбити процеси
-                "$procs = @('avastui','avastsvc','afwServ','avgui','avgsvc','avguard'); " +
-                "foreach ($p in $procs) { " +
-                "  Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue " +
-                "}");
 
             // 5. Очистити pending file rename operations (часта причина збою!)
             Log("[PreFlight] Checking pending file operations...");
