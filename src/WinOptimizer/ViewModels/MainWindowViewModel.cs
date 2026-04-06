@@ -7,6 +7,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.Threading;
 using WinOptimizer.Core.Enums;
 using WinOptimizer.Core.Models;
 using WinOptimizer.Services.Activation;
@@ -106,6 +107,15 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _showMainScreen = false;
 
+    // Antivirus removal screen
+    [ObservableProperty]
+    private bool _showAntivirusScreen = false;
+
+    [ObservableProperty]
+    private bool _canContinueFromAntivirus = false;
+
+    public ObservableCollection<AntivirusItemViewModel> DetectedAntiviruses { get; } = new();
+
     // Localized labels
     [ObservableProperty]
     private string _subtitleText = "";
@@ -189,6 +199,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     partial void OnShowActivationScreenChanged(bool value) => UpdateShowMainScreen();
     partial void OnShowLanguageScreenChanged(bool value) => UpdateShowMainScreen();
+    partial void OnShowAntivirusScreenChanged(bool value) => UpdateShowMainScreen();
     partial void OnIsOptimizingChanged(bool value) => UpdateShowMainScreen();
 
     /// <summary>
@@ -201,7 +212,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void UpdateShowMainScreen()
     {
-        ShowMainScreen = !ShowActivationScreen && !ShowLanguageScreen && !IsOptimizing && !IsCompleted && !HasError;
+        ShowMainScreen = !ShowActivationScreen && !ShowLanguageScreen && !ShowAntivirusScreen && !IsOptimizing && !IsCompleted && !HasError;
     }
 
     #region Activation
@@ -271,7 +282,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
                 await Task.Delay(800);
                 ShowActivationScreen = false;
-                ShowLanguageScreen = true;
+
+                // Перевірити антивіруси перед мовним екраном
+                await CheckAndShowAntivirusScreenAsync();
             }
             else
             {
@@ -300,6 +313,75 @@ public partial class MainWindowViewModel : ViewModelBase
             CanActivate = true;
             ActivateButtonText = "Activate";
         }
+    }
+
+    #endregion
+
+    #region Antivirus Detection
+
+    private CancellationTokenSource? _avPollingCts;
+
+    private async Task CheckAndShowAntivirusScreenAsync()
+    {
+        var antiviruses = await Task.Run(() => AntivirusDetectionService.Detect());
+
+        if (antiviruses.Count == 0)
+        {
+            // Антивірусів немає — одразу на мовний екран
+            ShowLanguageScreen = true;
+            return;
+        }
+
+        // Заповнити список
+        DetectedAntiviruses.Clear();
+        foreach (var av in antiviruses)
+            DetectedAntiviruses.Add(new AntivirusItemViewModel(av));
+
+        CanContinueFromAntivirus = false;
+        ShowAntivirusScreen = true;
+
+        // Запустити polling — перевіряємо кожні 3 секунди чи вже видалено
+        _avPollingCts?.Cancel();
+        _avPollingCts = new CancellationTokenSource();
+        _ = StartAvPollingAsync(_avPollingCts.Token);
+    }
+
+    private async Task StartAvPollingAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await Task.Delay(3000, ct).ContinueWith(_ => { });
+            if (ct.IsCancellationRequested) break;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var item in DetectedAntiviruses)
+                {
+                    if (item.IsRemoved) continue;
+                    var stillInstalled = AntivirusDetectionService.IsStillInstalled(item.Data);
+                    if (!stillInstalled)
+                        item.MarkRemoved();
+                }
+                CanContinueFromAntivirus = DetectedAntiviruses.All(a => a.IsRemoved);
+            });
+
+            if (CanContinueFromAntivirus)
+                break;
+        }
+    }
+
+    [RelayCommand]
+    private void RemoveAntivirus(AntivirusItemViewModel av)
+    {
+        AntivirusDetectionService.LaunchUninstaller(av.Data);
+    }
+
+    [RelayCommand]
+    private void ContinueFromAntivirus()
+    {
+        _avPollingCts?.Cancel();
+        ShowAntivirusScreen = false;
+        ShowLanguageScreen = true;
     }
 
     #endregion
@@ -689,4 +771,35 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     #endregion
+}
+
+/// <summary>
+/// ViewModel для одного антивірусу в списку видалення.
+/// </summary>
+public partial class AntivirusItemViewModel : ObservableObject
+{
+    public DetectedAntivirus Data { get; }
+
+    [ObservableProperty]
+    private bool _isRemoved = false;
+
+    [ObservableProperty]
+    private string _statusIcon = "⏳";
+
+    [ObservableProperty]
+    private IBrush _statusColor = new SolidColorBrush(Color.Parse("#FF8C00"));
+
+    public string DisplayName => Data.DisplayName;
+
+    public AntivirusItemViewModel(DetectedAntivirus data)
+    {
+        Data = data;
+    }
+
+    public void MarkRemoved()
+    {
+        IsRemoved = true;
+        StatusIcon = "✅";
+        StatusColor = new SolidColorBrush(Color.Parse("#2E7D32"));
+    }
 }

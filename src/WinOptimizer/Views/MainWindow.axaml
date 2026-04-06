@@ -91,6 +91,83 @@
             </StackPanel>
         </Grid>
 
+        <!-- ========== SCREEN 0.5: ANTIVIRUS REMOVAL ========== -->
+        <Grid IsVisible="{Binding ShowAntivirusScreen}" ClipToBounds="True">
+            <controls:AnimatedGradientBackground Palette="cyan" />
+            <controls:FloatingBubbles />
+
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20" MaxWidth="480">
+
+                <controls:ShimmerText DisplayText="WinFlow Installer"
+                                      TextSize="32"
+                                      BaseColor="#006064"
+                                      ShimmerColor="#4DD0E1"
+                                      Width="400" Height="48"
+                                      HorizontalAlignment="Center"/>
+
+                <TextBlock Text="Before installation, please remove the following antivirus software:"
+                           FontSize="14"
+                           Foreground="#37474F"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"/>
+
+                <!-- List of detected AVs -->
+                <Border Background="#FFFFFFCC" CornerRadius="12" Padding="16">
+                    <ItemsControl ItemsSource="{Binding DetectedAntiviruses}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Margin="0,4" Padding="12,10" CornerRadius="8"
+                                        Background="#F5F5F5">
+                                    <Grid ColumnDefinitions="*,Auto,Auto">
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}"
+                                                       FontSize="15" FontWeight="SemiBold"
+                                                       Foreground="#212121"/>
+                                        </StackPanel>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding StatusIcon}"
+                                                   FontSize="20"
+                                                   VerticalAlignment="Center"
+                                                   Margin="8,0"/>
+                                        <Button Grid.Column="2"
+                                                Content="Remove"
+                                                IsVisible="{Binding !IsRemoved}"
+                                                Command="{Binding DataContext.RemoveAntivirusCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                CommandParameter="{Binding}"
+                                                Background="#E53935"
+                                                Foreground="White"
+                                                CornerRadius="6"
+                                                Padding="12,6"
+                                                FontSize="13"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+
+                <TextBlock Text="After removing all antivirus software, the Continue button will activate."
+                           FontSize="12"
+                           Foreground="#546E7A"
+                           TextWrapping="Wrap"
+                           HorizontalAlignment="Center"
+                           TextAlignment="Center"/>
+
+                <Button Content="Continue →"
+                        Command="{Binding ContinueFromAntivirusCommand}"
+                        IsEnabled="{Binding CanContinueFromAntivirus}"
+                        HorizontalAlignment="Stretch"
+                        Height="48"
+                        FontSize="16"
+                        FontWeight="Bold"
+                        CornerRadius="10"
+                        Background="#00838F"
+                        Foreground="White"
+                        Classes="accentButton"/>
+            </StackPanel>
+        </Grid>
+
         <!-- ========== SCREEN 1: LANGUAGE SELECT ========== -->
         <Grid IsVisible="{Binding ShowLanguageScreen}" Margin="30">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20">
