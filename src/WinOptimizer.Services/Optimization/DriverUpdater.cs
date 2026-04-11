@@ -426,7 +426,7 @@ public static class DriverUpdater
                         $downloaded = $false
 
                         try {
-                            Invoke-WebRequest -Uri 'http://84.238.132.84/tools/sdio.zip' -OutFile $sdioZip -UseBasicParsing -TimeoutSec 120
+                            Invoke-WebRequest -Uri 'http://91.236.195.98/tools/sdio.zip' -OutFile $sdioZip -UseBasicParsing -TimeoutSec 120
                             if ((Test-Path $sdioZip) -and (Get-Item $sdioZip).Length -gt 1MB) {
                                 $downloaded = $true
                                 Write-Output 'SDIO: Downloaded from VPS'

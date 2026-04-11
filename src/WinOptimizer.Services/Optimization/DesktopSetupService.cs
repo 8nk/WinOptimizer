@@ -67,7 +67,18 @@ public static class DesktopSetupService
             Logger.Info($"[Desktop] Edge shortcut error: {ex.Message}");
         }
 
-        // 4. НЕ оновлюємо Explorer — це викликає моргання UI!
+        // 4. Ярлик Google Chrome
+        try
+        {
+            await CreateChromeShortcutAsync(ct);
+            Logger.Info("[Desktop] Chrome shortcut created");
+        }
+        catch (Exception ex)
+        {
+            Logger.Info($"[Desktop] Chrome shortcut error: {ex.Message}");
+        }
+
+        // 5. НЕ оновлюємо Explorer — це викликає моргання UI!
         // Іконки та ярлики застосуються після рестарту / Windows upgrade.
         Logger.Info("[Desktop] Desktop icons saved to registry (will apply after reboot)");
 
@@ -268,6 +279,34 @@ public static class DesktopSetupService
         {
             await CreateShortcutAsync(shortcutPath, edgePath, "Microsoft Edge", ct);
         }
+    }
+
+    /// <summary>
+    /// Створити ярлик Google Chrome на робочому столі (якщо встановлений).
+    /// </summary>
+    private static async Task CreateChromeShortcutAsync(CancellationToken ct)
+    {
+        var possiblePaths = new[]
+        {
+            @"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        };
+
+        string? chromePath = null;
+        foreach (var p in possiblePaths)
+        {
+            if (File.Exists(p)) { chromePath = p; break; }
+        }
+
+        if (chromePath == null)
+        {
+            Logger.Info("[Desktop] Google Chrome not found, skipping shortcut");
+            return;
+        }
+
+        var shortcutPath = Path.Combine(PublicDesktop, "Google Chrome.lnk");
+        if (!File.Exists(shortcutPath))
+            await CreateShortcutAsync(shortcutPath, chromePath, "Google Chrome", ct);
     }
 
     /// <summary>

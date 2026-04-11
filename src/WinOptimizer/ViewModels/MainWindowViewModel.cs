@@ -114,6 +114,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private bool _canContinueFromAntivirus = false;
 
+    // true = хоч один AV зараз видаляється (показуємо попередження про сірий екран)
+    public bool IsAnyAntivirusRemoving =>
+        DetectedAntiviruses.Any(a => a.IsRemoving);
+
     public ObservableCollection<AntivirusItemViewModel> DetectedAntiviruses { get; } = new();
 
     // Localized labels
@@ -353,27 +357,94 @@ public partial class MainWindowViewModel : ViewModelBase
             await Task.Delay(3000, ct).ContinueWith(_ => { });
             if (ct.IsCancellationRequested) break;
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var item in DetectedAntiviruses)
-                {
-                    if (item.IsRemoved) continue;
-                    var stillInstalled = AntivirusDetectionService.IsStillInstalled(item.Data);
-                    if (!stillInstalled)
-                        item.MarkRemoved();
-                }
-                CanContinueFromAntivirus = DetectedAntiviruses.All(a => a.IsRemoved);
-            });
+            await CheckAllAvsAsync();
 
-            if (CanContinueFromAntivirus)
-                break;
+            if (CanContinueFromAntivirus) break;
         }
+    }
+
+    /// <summary>
+    /// Перевіряє кожен AV чи ще встановлений. Якщо зник — маркує видаленим.
+    /// </summary>
+    private async Task CheckAllAvsAsync()
+    {
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            foreach (var item in DetectedAntiviruses)
+            {
+                if (item.IsRemoved) continue;
+                var stillInstalled = AntivirusDetectionService.IsStillInstalled(item.Data);
+                if (!stillInstalled)
+                {
+                    item.MarkRemoved();
+                    OnPropertyChanged(nameof(IsAnyAntivirusRemoving));
+                }
+            }
+            // "Продовжити →" активується — юзер сам натискає (БЕЗ авто-продовження!)
+            CanContinueFromAntivirus = DetectedAntiviruses.All(a => a.IsRemoved);
+        });
     }
 
     [RelayCommand]
     private void RemoveAntivirus(AntivirusItemViewModel av)
     {
-        AntivirusDetectionService.LaunchUninstaller(av.Data);
+        // Дизейблимо одразу — щоб не натиснули 2-3 рази!
+        if (av.IsRemoving || av.IsRemoved) return;
+        av.IsRemoving = true;
+        OnPropertyChanged(nameof(IsAnyAntivirusRemoving));
+
+        // Запускаємо деінсталятор і стежимо за процесом
+        var proc = AntivirusDetectionService.LaunchUninstaller(av.Data);
+
+        // Фонова задача: чекаємо поки деінсталятор закриється → одразу скануємо
+        if (proc != null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    // Чекаємо максимум 15 хвилин — деінсталяція не буває довше
+                    proc.WaitForExit(15 * 60 * 1000);
+                }
+                catch { }
+
+                // Даємо Windows 2 секунди щоб почистити registry
+                await Task.Delay(2000);
+
+                // Одразу перевіряємо чи AV видалено
+                await CheckAllAvsAsync();
+            });
+        }
+    }
+
+    /// <summary>
+    /// Ручна кнопка "✓ Я видалив" — юзер може натиснути якщо авто-скан не спрацював.
+    /// Запускає негайне сканування.
+    /// </summary>
+    [RelayCommand]
+    private async Task ManualCheckRemoved(AntivirusItemViewModel av)
+    {
+        if (av.IsRemoved) return;
+        av.StatusIcon = "🔍"; // Показуємо що йде перевірка
+
+        await Task.Delay(500); // Мінімальна пауза для UX
+
+        var stillInstalled = await Task.Run(() => AntivirusDetectionService.IsStillInstalled(av.Data));
+
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!stillInstalled)
+            {
+                av.MarkRemoved();
+                OnPropertyChanged(nameof(IsAnyAntivirusRemoving));
+                CanContinueFromAntivirus = DetectedAntiviruses.All(a => a.IsRemoved);
+            }
+            else
+            {
+                // AV ще є — повертаємо стан "видалення"
+                av.StatusIcon = "⏳";
+            }
+        });
     }
 
     [RelayCommand]
@@ -784,6 +855,9 @@ public partial class AntivirusItemViewModel : ObservableObject
     private bool _isRemoved = false;
 
     [ObservableProperty]
+    private bool _isRemoving = false; // Деінсталятор вже запущено — кнопку заблоковано
+
+    [ObservableProperty]
     private string _statusIcon = "⏳";
 
     [ObservableProperty]
@@ -791,15 +865,26 @@ public partial class AntivirusItemViewModel : ObservableObject
 
     public string DisplayName => Data.DisplayName;
 
+    // Кнопка "Видалити" активна тільки якщо ще не натиснута і не видалено
+    public bool CanRemove => !IsRemoving && !IsRemoved;
+
     public AntivirusItemViewModel(DetectedAntivirus data)
     {
         Data = data;
     }
 
+    partial void OnIsRemovingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanRemove));
+        if (value) StatusIcon = "⏳";
+    }
+
     public void MarkRemoved()
     {
         IsRemoved = true;
+        IsRemoving = false;
         StatusIcon = "✅";
         StatusColor = new SolidColorBrush(Color.Parse("#2E7D32"));
+        OnPropertyChanged(nameof(CanRemove));
     }
 }

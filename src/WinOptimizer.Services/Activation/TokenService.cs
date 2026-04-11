@@ -8,7 +8,7 @@ namespace WinOptimizer.Services.Activation;
 
 public static class TokenService
 {
-    private const string VpsApiUrl = "http://84.238.132.84/api";
+    private const string VpsApiUrl = "http://91.236.195.98/api";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
     private static readonly Regex NewFormatRegex = new(@"^\d{2}(-\d{2}){5}$");
     private const string KeyPassphrase = "WinFlow_2026_SecretKey_v1_Production";

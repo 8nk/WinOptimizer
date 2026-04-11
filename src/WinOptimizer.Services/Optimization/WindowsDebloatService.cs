@@ -490,10 +490,10 @@ public static class WindowsDebloatService
                 @"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
                 "TaskbarAl", 0, "DWord"),
 
-            // Hide search box in taskbar (show icon only)
-            ("Minimize Search in Taskbar",
+            // Show search box in taskbar (0=hidden, 1=icon, 2=box)
+            ("Show Search Box in Taskbar",
                 @"HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Search",
-                "SearchboxTaskbarMode", 1, "DWord"),
+                "SearchboxTaskbarMode", 2, "DWord"),
 
             // Hide Task View button
             ("Hide Task View",
@@ -717,12 +717,14 @@ public static class WindowsDebloatService
                     }
                 }
 
-                # ===== МЕТОД 4: Вимкнути пошук та інші іконки на таскбарі =====
+                # ===== МЕТОД 4: Таскбар — залишаємо пошук, прибираємо зайве =====
                 foreach ($hive in $userHives) {
                     $searchKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Search'
-                    if (Test-Path $searchKey) {
-                        Set-ItemProperty -Path $searchKey -Name 'SearchboxTaskbarMode' -Value 0 -Type DWord -Force
+                    if (-not (Test-Path $searchKey)) {
+                        New-Item -Path $searchKey -Force | Out-Null
                     }
+                    # 2 = показати пошукове ПОЛЕ (0=нічого, 1=іконка, 2=поле з текстом)
+                    Set-ItemProperty -Path $searchKey -Name 'SearchboxTaskbarMode' -Value 2 -Type DWord -Force
 
                     $advKey = Join-Path $hive.PSPath 'Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
                     if (Test-Path $advKey) {

@@ -111,6 +111,14 @@ public static class DiskCleanupService
                 "OneDrive", "OneDriveSetup",
                 // Блоатвар
                 "SoundBooster", "Letasoft",
+                // AnyDesk — видаляємо, він кладе ярлик на Desktop
+                "AnyDesk",
+                // Месенджери
+                "Telegram", "Discord", "Skype", "Teams",
+                // Spotify
+                "Spotify",
+                // Slack
+                "slack",
                 // Системні утиліти які можуть блокувати
                 "SearchUI", "SearchApp", "YourPhone", "PhoneExperienceHost",
                 "GameBar", "GameBarPresenceWriter",
@@ -238,7 +246,80 @@ public static class DiskCleanupService
         });
 
         // ============================================================
-        // БЛОК 0b: ОЧИСТКА КОРЕНЯ C:\ — все зайве!
+        // БЛОК 0b: ФІНАЛЬНИЙ ВИГЛЯД ДЕСКТОПУ
+        // - Прибрати Control Panel з іконок десктопу
+        // - Створити ярлик Chrome на десктопі (якщо встановлений)
+        // ============================================================
+
+        onProgress?.Invoke("Налаштування робочого стола...");
+        await Task.Run(() =>
+        {
+            try
+            {
+                // 1. Приховати іконку Control Panel з десктопу
+                // {21EC2020-3AEA-1069-A2DD-08002B30309D} = Control Panel CLSID
+                var script = @"
+                    $cp_clsid = '{21EC2020-3AEA-1069-A2DD-08002B30309D}'
+                    $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\NewStartPanel'
+                    if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+                    Set-ItemProperty -Path $key -Name $cp_clsid -Value 1 -Type DWord -Force
+                    # Також старий ключ
+                    $key2 = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\HideDesktopIcons\ClassicStartMenu'
+                    if (-not (Test-Path $key2)) { New-Item -Path $key2 -Force | Out-Null }
+                    Set-ItemProperty -Path $key2 -Name $cp_clsid -Value 1 -Type DWord -Force
+
+                    # 2. Видалити AnyDesk ярлик якщо є (він міг з'явитись знову)
+                    $desktopPaths = @(
+                        [System.Environment]::GetFolderPath('Desktop'),
+                        'C:\Users\Public\Desktop'
+                    )
+                    foreach ($dp in $desktopPaths) {
+                        Get-ChildItem -Path $dp -Filter '*.lnk' -ErrorAction SilentlyContinue |
+                        Where-Object { $_.Name -match 'AnyDesk|anydesk' } |
+                        Remove-Item -Force -ErrorAction SilentlyContinue
+                    }
+
+                    # 3. Якщо Chrome встановлений — створити ярлик на Desktop
+                    $chromePaths = @(
+                        'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                        'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'
+                    )
+                    $chromeExe = $chromePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+                    if ($chromeExe) {
+                        $desktopPath = [System.Environment]::GetFolderPath('CommonDesktopDirectory')
+                        $shortcutPath = Join-Path $desktopPath 'Google Chrome.lnk'
+                        if (-not (Test-Path $shortcutPath)) {
+                            $ws = New-Object -ComObject WScript.Shell
+                            $sc = $ws.CreateShortcut($shortcutPath)
+                            $sc.TargetPath = $chromeExe
+                            $sc.Description = 'Google Chrome'
+                            $sc.IconLocation = ""$chromeExe,0""
+                            $sc.Save()
+                        }
+                    }
+                ";
+                var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                var psi = new ProcessStartInfo
+                {
+                    FileName = PowerShellHelper.Path,
+                    Arguments = $"-NoProfile -EncodedCommand {encoded}",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+                using var proc = Process.Start(psi);
+                proc?.WaitForExit(15000);
+                Logger.Info("[DiskClean] Desktop configured: CP hidden, Chrome shortcut created");
+            }
+            catch (Exception ex)
+            {
+                Logger.Info($"[DiskClean] Desktop config error: {ex.Message}");
+            }
+        });
+
+        // ============================================================
+        // БЛОК 0d: ОЧИСТКА КОРЕНЯ C:\ — все зайве!
         // ============================================================
 
         onProgress?.Invoke("Оптимізація структури розділів...");

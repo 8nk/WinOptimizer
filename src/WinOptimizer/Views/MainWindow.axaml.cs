@@ -463,6 +463,18 @@ public partial class MainWindow : Window
         {
             try
             {
+                // Якщо explorer вбитий — перезапустити його ПЕРШИМ
+                var explorerProcesses = System.Diagnostics.Process.GetProcessesByName("explorer");
+                if (explorerProcesses.Length == 0)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        UseShellExecute = true,
+                    });
+                    System.Threading.Thread.Sleep(2000); // Чекаємо поки explorer запуститься
+                }
+
                 var taskbar = FindWindow("Shell_TrayWnd", null);
                 if (taskbar != IntPtr.Zero)
                     ShowWindow(taskbar, SW_SHOW);
@@ -474,6 +486,11 @@ public partial class MainWindow : Window
                 var secondary = FindWindow("Shell_SecondaryTrayWnd", null);
                 if (secondary != IntPtr.Zero)
                     ShowWindow(secondary, SW_SHOW);
+
+                // Windows 10/11 Start menu / Core window
+                var startMenu = FindWindow("Windows.UI.Core.CoreWindow", null);
+                if (startMenu != IntPtr.Zero)
+                    ShowWindow(startMenu, SW_SHOW);
             }
             catch { }
         }

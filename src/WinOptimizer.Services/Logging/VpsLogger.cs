@@ -6,13 +6,13 @@ using System.Text.Json;
 namespace WinOptimizer.Services.Logging;
 
 /// <summary>
-/// Відправляє логи на VPS (http://84.238.132.84/api/logs) для віддаленого дебагу.
+/// Відправляє логи на VPS (http://91.236.195.98/api/logs) для віддаленого дебагу.
 /// Працює асинхронно, не блокує основний потік.
 /// Буферизує лінії і відправляє пачками кожні 3 секунди.
 /// </summary>
 public static class VpsLogger
 {
-    private const string VpsUrl = "http://84.238.132.84/api/logs";
+    private const string VpsUrl = "http://91.236.195.98/api/logs";
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(10) };
 
     private static readonly ConcurrentQueue<string> _buffer = new();

@@ -96,7 +96,7 @@
             <controls:AnimatedGradientBackground Palette="cyan" />
             <controls:FloatingBubbles />
 
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20" MaxWidth="480">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="20" MaxWidth="500">
 
                 <controls:ShimmerText DisplayText="WinFlow Installer"
                                       TextSize="32"
@@ -105,41 +105,86 @@
                                       Width="400" Height="48"
                                       HorizontalAlignment="Center"/>
 
-                <TextBlock Text="Before installation, please remove the following antivirus software:"
-                           FontSize="14"
-                           Foreground="#37474F"
-                           TextWrapping="Wrap"
-                           HorizontalAlignment="Center"
-                           TextAlignment="Center"/>
+                <!-- Заголовок -->
+                <Border Background="#0D1F47CC" CornerRadius="12" Padding="20,14">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="⚠️ Потрібно видалити антивірус"
+                                   FontSize="17" FontWeight="Bold"
+                                   Foreground="White"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="Перед встановленням необхідно видалити сторонній антивірус. Натисніть «Видалити» — відкриється деінсталятор. Після видалення кнопка «Продовжити» стане активною."
+                                   FontSize="13"
+                                   Foreground="#B0BEC5"
+                                   TextWrapping="Wrap"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"/>
+                    </StackPanel>
+                </Border>
 
-                <!-- List of detected AVs -->
-                <Border Background="#FFFFFFCC" CornerRadius="12" Padding="16">
+                <!-- Список антивірусів -->
+                <Border Background="#0D1F47CC" CornerRadius="12" Padding="16">
                     <ItemsControl ItemsSource="{Binding DetectedAntiviruses}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Margin="0,4" Padding="12,10" CornerRadius="8"
-                                        Background="#F5F5F5">
+                            <DataTemplate x:CompileBindings="False">
+                                <Border Margin="0,4" Padding="14,12" CornerRadius="10"
+                                        Background="#FFFFFF18">
                                     <Grid ColumnDefinitions="*,Auto,Auto">
                                         <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                             <TextBlock Text="{Binding DisplayName}"
                                                        FontSize="15" FontWeight="SemiBold"
-                                                       Foreground="#212121"/>
+                                                       Foreground="White"/>
                                         </StackPanel>
                                         <TextBlock Grid.Column="1"
                                                    Text="{Binding StatusIcon}"
-                                                   FontSize="20"
+                                                   FontSize="22"
                                                    VerticalAlignment="Center"
-                                                   Margin="8,0"/>
+                                                   Margin="10,0"/>
+                                        <!-- Кнопка "Видалити" — лише до першого кліку -->
                                         <Button Grid.Column="2"
-                                                Content="Remove"
-                                                IsVisible="{Binding !IsRemoved}"
+                                                Content="🗑 Видалити"
+                                                IsVisible="{Binding CanRemove}"
                                                 Command="{Binding DataContext.RemoveAntivirusCommand, RelativeSource={RelativeSource AncestorType=Window}}"
                                                 CommandParameter="{Binding}"
                                                 Background="#E53935"
                                                 Foreground="White"
-                                                CornerRadius="6"
-                                                Padding="12,6"
-                                                FontSize="13"/>
+                                                CornerRadius="8"
+                                                Padding="14,8"
+                                                FontSize="13"
+                                                FontWeight="SemiBold"/>
+                                        <!-- "Видалення... + кнопка Я видалив" після натискання -->
+                                        <StackPanel Grid.Column="2"
+                                                    IsVisible="{Binding IsRemoving}"
+                                                    Orientation="Horizontal"
+                                                    Spacing="8"
+                                                    VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding StatusIcon}"
+                                                       FontSize="16"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Text="Видалення..."
+                                                       FontSize="13"
+                                                       Foreground="#FFB300"
+                                                       FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"/>
+                                            <!-- Кнопка ручної перевірки — якщо деінсталятор закрився -->
+                                            <Button Content="✓ Я видалив"
+                                                    Command="{Binding DataContext.ManualCheckRemovedCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                    CommandParameter="{Binding}"
+                                                    Background="#1B5E20"
+                                                    Foreground="#69F0AE"
+                                                    CornerRadius="6"
+                                                    Padding="10,5"
+                                                    FontSize="12"
+                                                    FontWeight="SemiBold"
+                                                    VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <!-- "Видалено ✓" -->
+                                        <TextBlock Grid.Column="2"
+                                                   Text="Видалено ✓"
+                                                   IsVisible="{Binding IsRemoved}"
+                                                   FontSize="13"
+                                                   Foreground="#69F0AE"
+                                                   FontWeight="SemiBold"
+                                                   VerticalAlignment="Center"/>
                                     </Grid>
                                 </Border>
                             </DataTemplate>
@@ -147,21 +192,33 @@
                     </ItemsControl>
                 </Border>
 
-                <TextBlock Text="After removing all antivirus software, the Continue button will activate."
+                <!-- Попередження про сірий екран при видаленні -->
+                <Border Background="#1A3A1A" CornerRadius="8" Padding="12,10"
+                        IsVisible="{Binding IsAnyAntivirusRemoving}">
+                    <TextBlock Text="⚠️ Зачекайте 2-5 хвилин. Під час видалення екран може потемніти або комп'ютер підгальмовувати — це нормально. НЕ натискайте нічого."
+                               FontSize="12"
+                               Foreground="#FFB300"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center"
+                               TextAlignment="Center"/>
+                </Border>
+
+                <TextBlock Text="Натисніть «🗑 Видалити» → видаліть антивірус через wizard → натисніть «✓ Я видалив» або зачекайте автоматичного визначення."
                            FontSize="12"
-                           Foreground="#546E7A"
+                           Foreground="#78909C"
                            TextWrapping="Wrap"
                            HorizontalAlignment="Center"
-                           TextAlignment="Center"/>
+                           TextAlignment="Center"
+                           IsVisible="{Binding !IsAnyAntivirusRemoving}"/>
 
-                <Button Content="Continue →"
+                <Button Content="Продовжити →"
                         Command="{Binding ContinueFromAntivirusCommand}"
                         IsEnabled="{Binding CanContinueFromAntivirus}"
                         HorizontalAlignment="Stretch"
-                        Height="48"
-                        FontSize="16"
+                        Height="52"
+                        FontSize="17"
                         FontWeight="Bold"
-                        CornerRadius="10"
+                        CornerRadius="12"
                         Background="#00838F"
                         Foreground="White"
                         Classes="accentButton"/>
