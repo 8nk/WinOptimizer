@@ -375,13 +375,13 @@ public static class DesktopSetupService
 
             try
             {
-                var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+                var output = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync(cts.Token);
                 return output.Trim();
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(true); } catch { }
+                try { proc.Kill(); } catch { }
                 return "";
             }
         }

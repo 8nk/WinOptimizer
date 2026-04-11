@@ -546,7 +546,7 @@ public static class NuclearCleanupService
                     // Не вбивати себе
                     if (proc.Id == Environment.ProcessId) continue;
 
-                    proc.Kill(true);
+                    proc.Kill();
                     Logger.Info($"[NuclearCleanup] Killed: {name} (PID {proc.Id})");
                 }
                 catch { }

@@ -687,7 +687,7 @@ public static class DriverUpdater
             if (!proc.WaitForExit(timeoutMs))
             {
                 Logger.Info($"[Drivers] PS TIMEOUT after {timeoutMs / 1000}s — killing process");
-                try { proc.Kill(true); } catch { }
+                try { proc.Kill(); } catch { }
             }
 
             // Після завершення/вбивства процесу — потоки закриті, можна прочитати

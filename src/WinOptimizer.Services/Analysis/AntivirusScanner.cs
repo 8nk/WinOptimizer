@@ -265,7 +265,7 @@ public static class AntivirusScanner
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(true); } catch { }
+            try { proc.Kill(); } catch { }
         }
     }
 
@@ -288,13 +288,13 @@ public static class AntivirusScanner
         using var cts = new CancellationTokenSource(timeout);
         try
         {
-            var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+            var output = await proc.StandardOutput.ReadToEndAsync();
             await proc.WaitForExitAsync(cts.Token);
             return output;
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(true); } catch { }
+            try { proc.Kill(); } catch { }
             throw new TimeoutException($"PowerShell timed out after {timeout.TotalSeconds}s");
         }
     }
@@ -319,7 +319,7 @@ public static class AntivirusScanner
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(true); } catch { }
+            try { proc.Kill(); } catch { }
             throw new TimeoutException($"PowerShell timed out after {timeout.TotalSeconds}s");
         }
     }

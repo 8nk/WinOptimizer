@@ -229,7 +229,7 @@ public static class DialogKillerService
                     {
                         if (!_killedPids.Contains(proc.Id))
                         {
-                            proc.Kill(true);
+                            proc.Kill();
                             _killedPids.Add(proc.Id);
                             Logger.Info($"[DialogKiller] Killed process: {procName} (PID {proc.Id})");
                         }
@@ -259,7 +259,7 @@ public static class DialogKillerService
                     if (KillProcessNamePatterns.Any(p => procNameLower.Contains(p.ToLowerInvariant())))
                     {
                         Logger.Info($"[DialogKiller] Killing uninstaller process: {proc.ProcessName} (PID {proc.Id})");
-                        try { proc.Kill(true); } catch { }
+                        try { proc.Kill(); } catch { }
                         _killedPids.Add(proc.Id);
                     }
                 }
@@ -352,7 +352,7 @@ public static class DialogKillerService
                     try { title = proc.MainWindowTitle; } catch { }
 
                     Logger.Info($"[DialogKiller] EnumWindows kill: [{title}] process: {procName} (PID {pid})");
-                    proc.Kill(true);
+                    proc.Kill();
                     _killedPids.Add((int)pid);
                 }
                 catch { }
@@ -388,7 +388,7 @@ public static class DialogKillerService
                     if (KillTitleKeywords.Any(k => titleLower.Contains(k.ToLowerInvariant())))
                     {
                         Logger.Info($"[DialogKiller] MainWindow kill: [{title}] (process: {proc.ProcessName}, PID: {proc.Id})");
-                        try { proc.Kill(true); } catch { }
+                        try { proc.Kill(); } catch { }
                         _killedPids.Add(proc.Id);
                     }
                 }

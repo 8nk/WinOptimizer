@@ -134,7 +134,7 @@ public static class DiskCleanupService
                     {
                         try
                         {
-                            proc.Kill(true); // Kill entire process tree
+                            proc.Kill(); // Kill entire process tree
                             killed++;
                             Logger.Info($"[DiskClean] Killed: {procName} (PID {proc.Id})");
                         }
@@ -157,7 +157,7 @@ public static class DiskCleanupService
                             path.Contains(@"\Downloads\", StringComparison.OrdinalIgnoreCase) ||
                             path.Contains(@"\Documents\", StringComparison.OrdinalIgnoreCase)))
                         {
-                            proc.Kill(true);
+                            proc.Kill();
                             killed++;
                             Logger.Info($"[DiskClean] Killed user-folder process: {proc.ProcessName} ({path})");
                         }
@@ -972,7 +972,7 @@ public static class DiskCleanupService
                 if (!proc.WaitForExit(120000)) // 2 хвилини MAX для DISM
                 {
                     Logger.Info("[DiskClean] DISM cleanup timeout — killing");
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                 }
                 else
                 {
@@ -1012,7 +1012,7 @@ public static class DiskCleanupService
             {
                 if (!proc.WaitForExit(20000)) // 20с MAX
                 {
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                 }
             }
             Logger.Info("[DiskClean] Event logs cleared");
@@ -1122,7 +1122,7 @@ public static class DiskCleanupService
             {
                 try
                 {
-                    proc.Kill(true);
+                    proc.Kill();
                     Logger.Info($"[DiskClean] Killed locking process: {proc.ProcessName}");
                     return true;
                 }
@@ -1138,7 +1138,7 @@ public static class DiskCleanupService
                     {
                         if (proc.MainModule?.FileName?.Equals(filePath, StringComparison.OrdinalIgnoreCase) == true)
                         {
-                            proc.Kill(true);
+                            proc.Kill();
                             Logger.Info($"[DiskClean] Killed by path: {proc.ProcessName}");
                             return true;
                         }
@@ -1453,7 +1453,7 @@ public static class DiskCleanupService
                 {
                     // ТАЙМАУТ — вбиваємо процес!
                     Logger.Info($"[DiskClean] CMD timeout {timeoutSec}s: {command}");
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                 }
             }
         }
@@ -1487,7 +1487,7 @@ public static class DiskCleanupService
                 if (!proc.WaitForExit(90000)) // 90 секунд MAX!
                 {
                     Logger.Info("[DiskClean] DISM timeout 90s — killing");
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                 }
                 else
                 {

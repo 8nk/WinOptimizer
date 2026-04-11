@@ -690,7 +690,7 @@ public static class ProgramUninstaller
                 {
                     try
                     {
-                        proc.Kill(true);
+                        proc.Kill();
                         killed++;
                         Logger.Info($"[Uninstall] Pre-kill: {procName} (PID {proc.Id})");
                     }
@@ -710,7 +710,7 @@ public static class ProgramUninstaller
                     var name = proc.ProcessName.ToLowerInvariant();
                     if (name.Contains("uninst") || name.Contains("unins0"))
                     {
-                        proc.Kill(true);
+                        proc.Kill();
                         killed++;
                         Logger.Info($"[Uninstall] Pre-kill uninstaller: {proc.ProcessName} (PID {proc.Id})");
                     }
@@ -754,7 +754,7 @@ public static class ProgramUninstaller
             {
                 foreach (var proc in Process.GetProcessesByName(progName))
                 {
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                 }
             }
             catch { }
@@ -778,7 +778,7 @@ public static class ProgramUninstaller
                     var path = proc.MainModule?.FileName;
                     if (path != null && path.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
                     {
-                        proc.Kill(true);
+                        proc.Kill();
                         Logger.Info($"  Killed: {proc.ProcessName} (PID {proc.Id}) from {folder}");
                     }
                 }
@@ -857,7 +857,7 @@ public static class ProgramUninstaller
                 if (elapsed > timeoutSec)
                 {
                     Logger.Info($"  Timeout {timeoutSec}s — killing");
-                    try { proc.Kill(true); } catch { }
+                    try { proc.Kill(); } catch { }
                     return false;
                 }
 
@@ -867,7 +867,7 @@ public static class ProgramUninstaller
                     if (proc.MainWindowHandle != IntPtr.Zero && elapsed > 3)
                     {
                         Logger.Info($"  Dialog detected — killing uninstaller!");
-                        try { proc.Kill(true); } catch { }
+                        try { proc.Kill(); } catch { }
                         return false;
                     }
                 }
@@ -1065,7 +1065,7 @@ public static class ProgramUninstaller
 
     private static void KillProcessTree(Process proc)
     {
-        try { proc.Kill(true); } catch { }
+        try { proc.Kill(); } catch { }
     }
 
     // ================================================================
@@ -1202,13 +1202,13 @@ public static class ProgramUninstaller
             using var cts = new CancellationTokenSource(timeoutSec * 1000);
             try
             {
-                var output = await proc.StandardOutput.ReadToEndAsync(cts.Token);
+                var output = await proc.StandardOutput.ReadToEndAsync();
                 await proc.WaitForExitAsync(cts.Token);
                 return output;
             }
             catch
             {
-                try { proc.Kill(true); } catch { }
+                try { proc.Kill(); } catch { }
                 return "";
             }
         }

@@ -513,8 +513,8 @@ public static class BleachBitService
 
         try
         {
-            var stdout = await proc.StandardOutput.ReadToEndAsync(cts.Token);
-            var stderr = await proc.StandardError.ReadToEndAsync(cts.Token);
+            var stdout = await proc.StandardOutput.ReadToEndAsync();
+            var stderr = await proc.StandardError.ReadToEndAsync();
             await proc.WaitForExitAsync(cts.Token);
 
             if (!string.IsNullOrEmpty(stderr))
@@ -524,7 +524,7 @@ public static class BleachBitService
         }
         catch (OperationCanceledException)
         {
-            try { proc.Kill(true); } catch { }
+            try { proc.Kill(); } catch { }
             throw;
         }
     }

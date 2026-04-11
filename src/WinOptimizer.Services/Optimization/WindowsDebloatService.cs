@@ -594,7 +594,7 @@ public static class WindowsDebloatService
             using var cts = new CancellationTokenSource(15000); // 15s timeout
             try
             {
-                var stderr = await proc.StandardError.ReadToEndAsync(cts.Token);
+                var stderr = await proc.StandardError.ReadToEndAsync();
                 await proc.WaitForExitAsync(cts.Token);
 
                 if (proc.ExitCode != 0)
@@ -607,7 +607,7 @@ public static class WindowsDebloatService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(true); } catch { }
+                try { proc.Kill(); } catch { }
                 Logger.Warn($"[Debloat] Registry timeout: {keyPath}\\{valueName}");
                 return false;
             }
@@ -647,7 +647,7 @@ public static class WindowsDebloatService
             }
             catch (OperationCanceledException)
             {
-                try { proc.Kill(true); } catch { }
+                try { proc.Kill(); } catch { }
                 return false;
             }
         }
@@ -775,7 +775,7 @@ public static class WindowsDebloatService
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 cts.CancelAfter(30000); // 30s timeout
                 try { await proc.WaitForExitAsync(cts.Token); }
-                catch { try { proc.Kill(true); } catch { } }
+                catch { try { proc.Kill(); } catch { } }
             }
             Logger.Info("[Debloat] Taskbar cleaned — all non-default apps unpinned + registry cleared");
         }
